@@ -1,0 +1,33 @@
+name: FocusTrafficLight
+options:
+  bundleIdPrefix: com.focustrafficlight
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    PRODUCT_NAME: Focus TrafficLight
+    MARKETING_VERSION: "3.3.2"
+    CURRENT_PROJECT_VERSION: "8"
+    SWIFT_VERSION: "5.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  FocusTrafficLight:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+      - Resources
+    settings:
+      base:
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: FocusTrafficLight.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.focustrafficlight.app
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: YES
