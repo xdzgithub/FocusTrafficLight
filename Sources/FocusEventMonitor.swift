@@ -50,6 +50,7 @@ final class FocusEventMonitor {
 
     @objc private func applicationDidLaunch(_ notification: Notification) {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        AppLogger.info("App launched: \(app.localizedName ?? "?") bundleID=\(app.bundleIdentifier ?? "?")")
         onAppLaunched?(app)
         observeApp(app)
     }
@@ -67,6 +68,9 @@ final class FocusEventMonitor {
             let name = notification as String
             if name == kAXUIElementDestroyedNotification as String ||
                name == kAXWindowMiniaturizedNotification as String {
+                var eventPID: pid_t = 0
+                AXUIElementGetPid(element, &eventPID)
+                AppLogger.info("AX event: \(name) on PID=\(eventPID)")
                 monitor.scheduleFocusCheck()
             }
         }

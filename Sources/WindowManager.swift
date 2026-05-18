@@ -2,8 +2,22 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.2
-//  Date: 2026-05-17
+//  Version: 3.3.3
+//  Date: 2026-05-18
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.3) — System Settings Focus Recovery Fix
+//  =============================================================================
+//
+//  BUG FIX:
+//    — onAppLaunched now defers performRecoveryCheck() by 0.3s to let the
+//      launched app create its window before scanning. Fixes a race where
+//      opening System Settings would briefly lose focus then snap back.
+//    — isValidRecoveryTarget relaxed: accepts AXDialog, AXFloatingWindow,
+//      AXSystemDialog subroles (was AXStandardWindow only). CloseButton
+//      attribute check changed from hard-reject to soft-log.
+//    — Diagnostic logging added to FocusEventMonitor and FocusRecoveryEngine
+//      for trigger tracing (subsystem: com.focustrafficlight.app).
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.0) — Removed App Termination Monitoring
@@ -81,7 +95,13 @@ final class WindowManager {
         }
 
         self.eventMonitor.onAppLaunched = { [weak self] app in
-            self?.recoveryEngine.performRecoveryCheck()
+            // Defer recovery check to let the launched app finish setting up its window.
+            // Without this delay, Guard 2/3/4 may see no valid window for the new app
+            // and incorrectly recover focus to the previous app.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self = self, self.isEnabled() else { return }
+                self.recoveryEngine.performRecoveryCheck()
+            }
         }
     }
 

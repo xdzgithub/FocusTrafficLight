@@ -29,7 +29,8 @@ final class FocusRecoveryEngine {
     func performRecoveryCheck() {
         guard accessibilityHelper.checkAccessibilityPermission() else { return }
 
-        AppLogger.info("Focus check triggered")
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        AppLogger.info("Focus check triggered — frontmost: \(frontmostApp?.localizedName ?? "nil") bundleID=\(frontmostApp?.bundleIdentifier ?? "nil")")
 
         // Guard 1: Quick Look hard block
         if isFinderQuickLookActive() {
@@ -38,7 +39,7 @@ final class FocusRecoveryEngine {
         }
 
         // Guard 2: Frontmost app has any visible interactive window
-        if let frontmostApp = NSWorkspace.shared.frontmostApplication,
+        if let frontmostApp = frontmostApp,
            frontmostAppHasVisibleWindow(frontmostApp) {
             AppLogger.debug("Guard 2: Frontmost app has visible window, skipping recovery")
             return
@@ -313,16 +314,18 @@ final class FocusRecoveryEngine {
             return false
         }
 
-        if subroleStr != kAXStandardWindowSubrole as String {
+        if subroleStr != kAXStandardWindowSubrole as String &&
+           subroleStr != "AXDialog" &&
+           subroleStr != "AXFloatingWindow" &&
+           subroleStr != "AXSystemDialog" {
             AppLogger.debug("Rejected recovery target: subrole=\(subroleStr) title=\(titleStr)")
             return false
         }
 
         var closeButton: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButton) == .success,
-              closeButton != nil else {
-            AppLogger.debug("Rejected recovery target: no close button title=\(titleStr)")
-            return false
+        let hasCloseButton = AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButton) == .success && closeButton != nil
+        if !hasCloseButton {
+            AppLogger.debug("Recovery target has no close button title=\(titleStr), accepting anyway")
         }
 
         var minimized: CFTypeRef?
