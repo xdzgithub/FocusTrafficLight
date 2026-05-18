@@ -2,36 +2,36 @@
 
 # FocusTrafficLight
 
-macOS 菜单栏应用，自动管理窗口焦点恢复。
+A macOS menu bar app that automatically manages window focus recovery.
 
-## 功能
+## Features
 
-- **自动焦点恢复**: 当窗口关闭或最小化时，自动将焦点恢复到上一个有效的窗口
-- **智能守卫系统**: 四层验证确保只在真正需要时恢复焦点
-  - Finder Quick Look 检测（预览文件时不干扰）
-  - 前台应用可见窗口检测（对话框/面板场景跳过）
-  - 当前焦点窗口有效性验证
-  - 恢复目标严格验证
-- **多窗口应用支持**: 通过窗口边界匹配精确定位目标窗口
-- **菜单栏控制**: 简洁的菜单栏界面，一键开关
+- **Automatic Focus Recovery**: When a window is closed or minimized, automatically restores focus to the last valid window
+- **Smart Guard System**: Four-layer validation ensures focus is only recovered when truly needed
+  - Finder Quick Look detection (no interference during file preview)
+  - Frontmost app visible window detection (skip for dialog/panel scenarios)
+  - Current focused window validity verification
+  - Recovery target strict validation
+- **Multi-window App Support**: Precise window targeting through bounds matching
+- **Menu Bar Control**: Clean menu bar interface with one-click toggle
 
-## 系统要求
+## Requirements
 
-- macOS 13.0 (Ventura) 或更高版本
-- 需要辅助功能权限
+- macOS (tested on macOS 15, others untested)
+- Accessibility permission required
 
-## 安装
+## Installation
 
-1. 下载 `Focus TrafficLight.zip`
-2. 解压并拖入应用程序文件夹
-3. 首次启动时授予辅助功能权限，**授权后需重启应用**
+1. Download `Focus TrafficLight.zip`
+2. Extract and drag to Applications folder
+3. Grant Accessibility permission on first launch, **restart the app after granting permission**
 
-## 使用
+## Usage
 
-- 点击菜单栏图标查看状态
-- "Enable Focus" 开关控制是否启用焦点恢复
-- "Launch at Login" 设置开机自启
+- Click menu bar icon to view status
+- "Enable Focus" toggle to enable/disable focus recovery
+- "Launch at Login" to set startup behavior
 
-## 隐私
+## Privacy
 
-本应用需要辅助功能权限来监控窗口事件。权限仅用于焦点管理，不会收集或传输任何用户数据。
+This app requires Accessibility permission to monitor window events. The permission is only used for focus management. No user data is collected or transmitted.
