@@ -24,7 +24,7 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 1. Download `Focus TrafficLight.zip`
 2. Extract and drag to Applications folder
-3. Grant Accessibility permission on first launch
+3. Grant Accessibility permission on first launch, **restart the app after granting permission**
 
 ## Usage
 
