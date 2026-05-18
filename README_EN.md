@@ -1,3 +1,5 @@
+**[中文](./README.md)** | English
+
 # FocusTrafficLight
 
 A macOS menu bar app that automatically manages window focus recovery.

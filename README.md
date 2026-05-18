@@ -1,3 +1,5 @@
+**[English](./README_EN.md)** | 中文
+
 # FocusTrafficLight
 
 macOS 菜单栏应用，自动管理窗口焦点恢复。
