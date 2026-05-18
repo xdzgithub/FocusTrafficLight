@@ -6,7 +6,7 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 ## Features
 
-- **Automatic Focus Recovery**: When a window is closed or minimized, automatically restores focus to the last valid window
+- **Automatic Focus Recovery**: When a window is closed or minimized, automatically focuses on the topmost valid window
 - **Smart Guard System**: Four-layer validation ensures focus is only recovered when truly needed
   - Finder Quick Look detection (no interference during file preview)
   - Frontmost app visible window detection (skip for dialog/panel scenarios)
