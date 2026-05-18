@@ -12,9 +12,13 @@ DerivedData/
 # Build
 build/
 *.app
+*.zip
 
 # Logs
 *.log
 
 # Temporary
 *.tmp
+
+# Versions (local backup only)
+Versions/
