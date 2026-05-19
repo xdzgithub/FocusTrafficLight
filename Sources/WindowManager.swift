@@ -2,17 +2,28 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.3
-//  Date: 2026-05-18
+//  Version: 3.3.4
+//  Date: 2026-05-19
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.4) — Remove App-Launch Focus Recovery
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Removed performRecoveryCheck() from onAppLaunched entirely. App launch
+//      recovery raced with cold-launch window creation (most visible with
+//      System Settings), stealing focus back to the previous app. macOS
+//      handles focus on app launch correctly on its own.
+//    — Retained: isValidRecoveryTarget subrole relax, closeButton soft-log,
+//      and diagnostic logging from v3.3.3.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.3) — System Settings Focus Recovery Fix
 //  =============================================================================
 //
-//  BUG FIX:
-//    — onAppLaunched now defers performRecoveryCheck() by 0.3s to let the
-//      launched app create its window before scanning. Fixes a race where
-//      opening System Settings would briefly lose focus then snap back.
+//  BUG FIX (v3.3.3):
+//    — onAppLaunched deferred performRecoveryCheck() by 0.3s (later replaced
+//      by v3.3.4's full removal).
 //    — isValidRecoveryTarget relaxed: accepts AXDialog, AXFloatingWindow,
 //      AXSystemDialog subroles (was AXStandardWindow only). CloseButton
 //      attribute check changed from hard-reject to soft-log.
@@ -95,13 +106,9 @@ final class WindowManager {
         }
 
         self.eventMonitor.onAppLaunched = { [weak self] app in
-            // Defer recovery check to let the launched app finish setting up its window.
-            // Without this delay, Guard 2/3/4 may see no valid window for the new app
-            // and incorrectly recover focus to the previous app.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                guard let self = self, self.isEnabled() else { return }
-                self.recoveryEngine.performRecoveryCheck()
-            }
+            // App launch does not need focus recovery — macOS handles focus
+            // correctly on its own. A recovery check here races with the new
+            // app's window creation and may steal focus back to the previous app.
         }
     }
 
