@@ -98,7 +98,7 @@ final class WindowManager {
             // Defer recovery check to let the launched app finish setting up its window.
             // Without this delay, Guard 2/3/4 may see no valid window for the new app
             // and incorrectly recover focus to the previous app.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self = self, self.isEnabled() else { return }
                 self.recoveryEngine.performRecoveryCheck()
             }
