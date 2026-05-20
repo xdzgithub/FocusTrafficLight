@@ -2,8 +2,19 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.4
-//  Date: 2026-05-19
+//  Version: 3.3.5
+//  Date: 2026-05-20
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.5) — Fix Ghost Window Guard-2 Block
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Guard 2 (frontmostAppHasVisibleWindow) now filters out tiny windows
+//      (<100×100px). Apps like 百度网盘 keep invisible helper windows that
+//      caused Guard 2 to block recovery after the main window was minimized
+//      or closed. This is a generic fix for any app with shadow/ghost windows.
+//    — Guard block logs upgraded from debug to info level for Release builds.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.4) — Remove App-Launch Focus Recovery

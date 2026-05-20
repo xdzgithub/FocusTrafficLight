@@ -34,21 +34,21 @@ final class FocusRecoveryEngine {
 
         // Guard 1: Quick Look hard block
         if isFinderQuickLookActive() {
-            AppLogger.debug("Guard 1: Finder Quick Look active, skipping recovery")
+            AppLogger.info("Guard 1: Finder Quick Look active, skipping recovery")
             return
         }
 
         // Guard 2: Frontmost app has any visible interactive window
         if let frontmostApp = frontmostApp,
            frontmostAppHasVisibleWindow(frontmostApp) {
-            AppLogger.debug("Guard 2: Frontmost app has visible window, skipping recovery")
+            AppLogger.info("Guard 2: Frontmost app has visible window, skipping recovery")
             return
         }
 
         // Guard 3: System already has a usable focused window
         if let focusedWindow = getCurrentFocusedWindow() {
             if isUsableFocusedWindow(focusedWindow) {
-                AppLogger.debug("Guard 3: Usable focused window exists, skipping recovery")
+                AppLogger.info("Guard 3: Usable focused window exists, skipping recovery")
                 return
             }
         }
@@ -126,6 +126,16 @@ final class FocusRecoveryEngine {
             AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
             if let isMin = minimized as? Bool, isMin {
                 continue
+            }
+
+            // Filter out invisible helper windows (0x0 or off-screen)
+            var sizeValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success {
+                var size = CGSize.zero
+                AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+                if size.width < 100 || size.height < 100 {
+                    continue
+                }
             }
 
             return true
