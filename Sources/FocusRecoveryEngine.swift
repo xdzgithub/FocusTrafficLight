@@ -102,12 +102,33 @@ final class FocusRecoveryEngine {
     // MARK: - Guard 2: Frontmost App Visible Window
 
     /// Checks whether the given app has any visible AXWindow (including panels,
-    /// dialogs, sheets). Used to detect app startup Open Panel / Save Panel states
-    /// where getCurrentFocusedWindow() may transiently return nil.
+    /// dialogs, sheets). Cross-references with CGWindowList to exclude hidden
+    /// background windows that AX still lists as visible.
     private func frontmostAppHasVisibleWindow(_ app: NSRunningApplication) -> Bool {
         let pid = app.processIdentifier
-        let appElement = AXUIElementCreateApplication(pid)
 
+        // Get the set of window numbers that are actually on screen (CGWindow).
+        guard let cgWindowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return false
+        }
+
+        var onScreenWindowNumbers = Set<Int>()
+        for cgWindow in cgWindowList {
+            guard let layer = cgWindow[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
+            guard let ownerPID = cgWindow[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid else { continue }
+            guard let windowNumber = cgWindow[kCGWindowNumber as String] as? Int else { continue }
+            onScreenWindowNumbers.insert(windowNumber)
+        }
+
+        guard !onScreenWindowNumbers.isEmpty else {
+            return false
+        }
+
+        // Verify at least one on-screen window has a valid AXWindow counterpart.
+        let appElement = AXUIElementCreateApplication(pid)
         var windows: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windows)
 
@@ -118,27 +139,27 @@ final class FocusRecoveryEngine {
         for window in windowList {
             var role: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role)
-            let roleStr = role as? String
-
-            guard roleStr == kAXWindowRole as String else { continue }
+            guard (role as? String) == kAXWindowRole as String else { continue }
 
             var minimized: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
-            if let isMin = minimized as? Bool, isMin {
-                continue
-            }
+            if let isMin = minimized as? Bool, isMin { continue }
 
-            // Filter out invisible helper windows (0x0 or off-screen)
+            // Filter out invisible helper windows (<100×100px)
             var sizeValue: CFTypeRef?
             if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success {
                 var size = CGSize.zero
                 AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
-                if size.width < 100 || size.height < 100 {
-                    continue
-                }
+                if size.width < 100 || size.height < 100 { continue }
             }
 
-            return true
+            // Confirm this AX window is actually on screen (cross-reference CGWindow)
+            var windowNumber: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, "AXCGWindowID" as CFString, &windowNumber) == .success,
+               let cgID = windowNumber as? Int,
+               onScreenWindowNumbers.contains(cgID) {
+                return true
+            }
         }
 
         return false

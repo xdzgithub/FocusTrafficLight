@@ -2,18 +2,28 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.5
-//  Date: 2026-05-20
+//  Version: 3.3.6
+//  Date: 2026-05-26
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.6) — Guard 2 CGWindow Cross-Reference
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Guard 2 (frontmostAppHasVisibleWindow) now cross-references AX window
+//      candidates with CGWindowList (.optionOnScreenOnly). Apps like WPS keep
+//      hidden background windows that AX still lists as visible, blocking
+//      focus recovery after minimize/close.
+//    — Retains v3.3.5 ghost-window size filter (<100×100px) as complementary
+//      protection.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.5) — Fix Ghost Window Guard-2 Block
 //  =============================================================================
 //
-//  BUG FIX:
-//    — Guard 2 (frontmostAppHasVisibleWindow) now filters out tiny windows
-//      (<100×100px). Apps like 百度网盘 keep invisible helper windows that
-//      caused Guard 2 to block recovery after the main window was minimized
-//      or closed. This is a generic fix for any app with shadow/ghost windows.
+//  BUG FIX (v3.3.5):
+//    — Guard 2 now filters out tiny windows (<100×100px). Apps like 百度网盘
+//      keep invisible helper windows that caused Guard 2 to block recovery.
 //    — Guard block logs upgraded from debug to info level for Release builds.
 //
 //  =============================================================================
