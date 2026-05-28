@@ -2,8 +2,22 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.6
-//  Date: 2026-05-26
+//  Version: 3.3.7
+//  Date: 2026-05-28
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.7) — Launch Grace Period for AXUIElementDestroyed
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Apps launched within the last 1.0s now have their AXUIElementDestroyed
+//      notifications ignored during focus recovery scheduling. Cold-launch apps
+//      (Preview, System Settings, etc.) create/destroy internal UI elements as
+//      part of window setup. These transient destroy events were triggering
+//      performRecoveryCheck() 0.05s later, before the app's real window appeared
+//      in CGWindowList, causing Guard 2 to fail and focus to be stolen back to
+//      the previous app. A 1.0s grace period lets the new app fully set up.
+//    — kAXWindowMiniaturizedNotification is unaffected (no grace period check).
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.6) — Guard 2 CGWindow Cross-Reference
