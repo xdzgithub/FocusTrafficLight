@@ -13,6 +13,9 @@ final class FocusEventMonitor {
     private var isMonitoring = false
     private var pendingFocusCheck = false
     private let settleDelay: TimeInterval = 0.05
+    private let launchGracePeriod: TimeInterval = 2.0
+    private var launchTimestamps: [pid_t: TimeInterval] = [:]
+    private let launchLock = NSLock()
 
     /// Called when a window event (close/minimize/hide) may require focus recovery.
     var onFocusCheckNeeded: (() -> Void)?
@@ -50,7 +53,11 @@ final class FocusEventMonitor {
 
     @objc private func applicationDidLaunch(_ notification: Notification) {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let pid = app.processIdentifier
         AppLogger.info("App launched: \(app.localizedName ?? "?") bundleID=\(app.bundleIdentifier ?? "?")")
+        launchLock.lock()
+        launchTimestamps[pid] = Date().timeIntervalSince1970
+        launchLock.unlock()
         onAppLaunched?(app)
         observeApp(app)
     }
@@ -71,6 +78,21 @@ final class FocusEventMonitor {
                 var eventPID: pid_t = 0
                 AXUIElementGetPid(element, &eventPID)
                 AppLogger.info("AX event: \(name) on PID=\(eventPID)")
+
+                // Cold-launch apps create/destroy internal UI elements during
+                // window setup. If the app launched recently, skip the focus
+                // check — its real window may not be in CGWindowList yet.
+                if name == kAXUIElementDestroyedNotification as String {
+                    monitor.launchLock.lock()
+                    let launchTime = monitor.launchTimestamps[eventPID]
+                    monitor.launchLock.unlock()
+                    if let t = launchTime,
+                       Date().timeIntervalSince1970 - t < monitor.launchGracePeriod {
+                        AppLogger.info("Skip check — app launched \(String(format: "%.1f", Date().timeIntervalSince1970 - t))s ago (PID=\(eventPID))")
+                        return
+                    }
+                }
+
                 monitor.scheduleFocusCheck()
             }
         }

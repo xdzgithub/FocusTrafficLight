@@ -2,8 +2,23 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.6
-//  Date: 2026-05-26
+//  Version: 3.3.7
+//  Date: 2026-05-28
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.7) — Suppress Focus Check During App Launch
+//  =============================================================================
+//
+//  BUG FIX:
+//    — FocusEventMonitor now records app launch timestamps. AXUIElementDestroyed
+//      events from apps launched within the last 2.0s are ignored. Cold-launch
+//      apps (Preview, System Settings) create/destroy internal UI elements as
+//      part of window setup. These transient events were triggering
+//      performRecoveryCheck() before the app's real window appeared in
+//      CGWindowList, causing Guard 2 to fail and focus to be stolen back.
+//    — kAXWindowMiniaturizedNotification is unaffected.
+//    — FocusRecoveryEngine is unchanged — this fix operates purely at the
+//      event scheduling level.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.6) — Guard 2 CGWindow Cross-Reference
