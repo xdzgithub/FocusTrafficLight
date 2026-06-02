@@ -136,6 +136,7 @@ final class FocusRecoveryEngine {
             return false
         }
 
+        var candidateCount = 0
         for window in windowList {
             var role: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role)
@@ -153,6 +154,8 @@ final class FocusRecoveryEngine {
                 if size.width < 100 || size.height < 100 { continue }
             }
 
+            candidateCount += 1
+
             // Confirm this AX window is actually on screen (cross-reference CGWindow)
             var windowNumber: CFTypeRef?
             if AXUIElementCopyAttributeValue(window, "AXCGWindowID" as CFString, &windowNumber) == .success,
@@ -160,6 +163,13 @@ final class FocusRecoveryEngine {
                onScreenWindowNumbers.contains(cgID) {
                 return true
             }
+        }
+
+        // CGWindowID cross-reference didn't match, but CG has windows on screen
+        // AND AX sees valid window candidates — treat as visible (happens with
+        // window tiling, split-screen, and some apps like eM Client).
+        if candidateCount > 0 {
+            return true
         }
 
         return false

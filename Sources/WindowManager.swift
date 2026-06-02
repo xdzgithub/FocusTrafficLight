@@ -2,8 +2,22 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.7
-//  Date: 2026-05-28
+//  Version: 3.3.8
+//  Date: 2026-06-02
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.8) — Guard 2 CGWindowID Fallback
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Guard 2 (frontmostAppHasVisibleWindow) now passes when both CGWindowList
+//      and AX report visible windows for the frontmost app, even if the
+//      AXCGWindowID cross-reference fails. Some scenarios (window tiling, macOS
+//      window snapping, certain apps like eM Client) can have mismatched window
+//      IDs between AX and CGWindow, causing Guard 2 to falsely report no visible
+//      window and triggering unwanted focus recovery.
+//    — Original v3.3.6 protections are preserved: if CGWindowList has no windows
+//      for the app, Guard 2 still fails (ghost/hidden window filtering intact).
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.7) — Suppress Focus Check During App Launch
