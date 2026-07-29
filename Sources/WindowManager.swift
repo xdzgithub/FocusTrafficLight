@@ -2,8 +2,23 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.8
-//  Date: 2026-06-02
+//  Version: 3.3.9
+//  Date: 2026-07-29
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.9) — Frontmost-Only AX Event Filter
+//  =============================================================================
+//
+//  BUG FIX:
+//    — FocusEventMonitor now ignores AX events from non-frontmost applications.
+//      Background apps constantly create/destroy internal UI elements; previously
+//      any such event would trigger performRecoveryCheck(). If this happened
+//      during a user-initiated app switch, findTopmostValidWindow() could return
+//      the previous app's window and steal focus back.
+//    — The fix is at the event source: only kAXUIElementDestroyedNotification /
+//      kAXWindowMiniaturizedNotification from the currently-frontmost app
+//      schedule a focus recovery check. This is a one-line PID comparison in
+//      the AXObserver callback, not a time-based heuristic.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.8) — Guard 2 CGWindowID Fallback

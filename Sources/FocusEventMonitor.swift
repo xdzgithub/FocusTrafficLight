@@ -79,6 +79,19 @@ final class FocusEventMonitor {
                 AXUIElementGetPid(element, &eventPID)
                 AppLogger.info("AX event: \(name) on PID=\(eventPID)")
 
+                // Only respond to events from the frontmost application.
+                // Background apps create/destroy internal UI elements
+                // constantly (notifications, auto-save panels, helper
+                // windows). Without this filter, an unrelated AX event
+                // from a background app can trigger performRecoveryCheck()
+                // during a user-initiated app switch, causing the recovery
+                // engine to steal focus back to the previous app.
+                let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+                if eventPID != frontmostPID {
+                    AppLogger.info("Skip check — PID=\(eventPID) not frontmost (\(frontmostPID))")
+                    return
+                }
+
                 // Cold-launch apps create/destroy internal UI elements during
                 // window setup. If the app launched recently, skip the focus
                 // check — its real window may not be in CGWindowList yet.
