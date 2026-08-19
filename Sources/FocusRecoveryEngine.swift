@@ -38,6 +38,14 @@ final class FocusRecoveryEngine {
             return
         }
 
+        // Finder's desktop is itself a valid foreground target. When Finder is
+        // frontmost with no standard window, the user is on the desktop (this
+        // also covers the brief teardown after a Quick Look preview closes).
+        if let frontmostApp = frontmostApp, isFinderDesktopOnly(frontmostApp) {
+            AppLogger.info("Finder desktop guard: desktop active, skipping recovery")
+            return
+        }
+
         // Guard 2: Frontmost app has any visible interactive window
         if let frontmostApp = frontmostApp,
            frontmostAppHasVisibleWindow(frontmostApp) {
@@ -66,12 +74,75 @@ final class FocusRecoveryEngine {
     // MARK: - Guard 1: Quick Look Detection (CGWindow-based, no AX)
 
     private func isFinderQuickLookActive() -> Bool {
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
-              frontmostApp.bundleIdentifier == "com.apple.finder" else {
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let finderPID = frontmostApp?.bundleIdentifier == "com.apple.finder"
+            ? frontmostApp?.processIdentifier
+            : nil
+
+        // Quick Look's panel can register slightly after the AX event, so scan
+        // both the on-screen and full window lists for a late-registered panel.
+        let listOptions: [CGWindowListOption] = [
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            [.optionAll, .excludeDesktopElements],
+        ]
+
+        for options in listOptions {
+            guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+                continue
+            }
+
+            for windowInfo in windowList {
+                guard let layer = windowInfo[kCGWindowLayer as String] as? Int else { continue }
+
+                // macOS 14+ serves the preview from a QuickLook helper process.
+                if layer > 0 && isQuickLookOwned(windowInfo) {
+                    return true
+                }
+            }
+        }
+
+        // Desktop Quick Look can remove Finder's only normal window, so a
+        // floating Finder panel is enough while Finder is frontmost. Only
+        // on-screen panels count here — the full list above can contain stale
+        // offscreen Finder windows.
+        guard let finderPID = finderPID,
+              let onScreenList = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID
+              ) as? [[String: Any]] else {
             return false
         }
 
-        let finderPID = frontmostApp.processIdentifier
+        for windowInfo in onScreenList {
+            guard let layer = windowInfo[kCGWindowLayer as String] as? Int, layer > 0,
+                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == finderPID else { continue }
+            return true
+        }
+
+        return false
+    }
+
+    private func isQuickLookOwned(_ windowInfo: [String: Any]) -> Bool {
+        if let ownerName = windowInfo[kCGWindowOwnerName as String] as? String,
+           ownerName.localizedCaseInsensitiveContains("quicklook") {
+            return true
+        }
+
+        guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else { return false }
+        let ownerApp = NSRunningApplication(processIdentifier: ownerPID)
+        if let bundleID = ownerApp?.bundleIdentifier,
+           bundleID.localizedCaseInsensitiveContains("quicklook") {
+            return true
+        }
+        return false
+    }
+
+    /// Returns true when Finder is frontmost with no on-screen standard window.
+    /// Desktop icons are excluded from CGWindowList, so a desktop-only Finder
+    /// state has no layer-0 window at all.
+    private func isFinderDesktopOnly(_ app: NSRunningApplication) -> Bool {
+        guard app.bundleIdentifier == "com.apple.finder" else { return false }
 
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
@@ -80,23 +151,15 @@ final class FocusRecoveryEngine {
             return false
         }
 
-        var finderHasNormalWindow = false
-        var finderHasFloatingPanel = false
-
         for windowInfo in windowList {
             guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == finderPID else { continue }
-
-            guard let layer = windowInfo[kCGWindowLayer as String] as? Int else { continue }
-
-            if layer == 0 {
-                finderHasNormalWindow = true
-            } else {
-                finderHasFloatingPanel = true
+                  ownerPID == app.processIdentifier else { continue }
+            if (windowInfo[kCGWindowLayer as String] as? Int) == 0 {
+                return false
             }
         }
 
-        return finderHasNormalWindow && finderHasFloatingPanel
+        return true
     }
 
     // MARK: - Guard 2: Frontmost App Visible Window

@@ -17,6 +17,13 @@ final class FocusEventMonitor {
     private var launchTimestamps: [pid_t: TimeInterval] = [:]
     private let launchLock = NSLock()
 
+    /// Desktop Quick Look tears down Finder's desktop window before the preview
+    /// panel appears. Finder-triggered checks are deferred long enough for
+    /// Guard 1 to recognize the panel instead of racing it.
+    private let finderPreviewSettleDelay: TimeInterval = 0.8
+    private var finderPreviewSuppressUntil: TimeInterval = 0
+    private let finderPreviewLock = NSLock()
+
     /// Called when a window event (close/minimize/hide) may require focus recovery.
     var onFocusCheckNeeded: (() -> Void)?
 
@@ -86,7 +93,8 @@ final class FocusEventMonitor {
                 // from a background app can trigger performRecoveryCheck()
                 // during a user-initiated app switch, causing the recovery
                 // engine to steal focus back to the previous app.
-                let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+                let frontmostApp = NSWorkspace.shared.frontmostApplication
+                let frontmostPID = frontmostApp?.processIdentifier ?? 0
                 if eventPID != frontmostPID {
                     AppLogger.info("Skip check — PID=\(eventPID) not frontmost (\(frontmostPID))")
                     return
@@ -104,6 +112,20 @@ final class FocusEventMonitor {
                         AppLogger.info("Skip check — app launched \(String(format: "%.1f", Date().timeIntervalSince1970 - t))s ago (PID=\(eventPID))")
                         return
                     }
+                }
+
+                // Space-bar previews on the desktop emit destroy/minimize events
+                // from Finder before the Quick Look panel is registered. Hold
+                // Finder-triggered checks so the panel can appear and Guard 1
+                // can suppress recovery while the preview is open.
+                if frontmostApp?.bundleIdentifier == "com.apple.finder" {
+                    let now = Date().timeIntervalSince1970
+                    monitor.finderPreviewLock.lock()
+                    monitor.finderPreviewSuppressUntil = max(
+                        monitor.finderPreviewSuppressUntil,
+                        now + monitor.finderPreviewSettleDelay
+                    )
+                    monitor.finderPreviewLock.unlock()
                 }
 
                 monitor.scheduleFocusCheck()
@@ -127,7 +149,13 @@ final class FocusEventMonitor {
         guard !pendingFocusCheck else { return }
         pendingFocusCheck = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + settleDelay) { [weak self] in
+        let now = Date().timeIntervalSince1970
+        finderPreviewLock.lock()
+        let isFinderPreviewSettle = now < finderPreviewSuppressUntil
+        finderPreviewLock.unlock()
+
+        let delay = isFinderPreviewSettle ? finderPreviewSettleDelay : settleDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.pendingFocusCheck = false
             self?.onFocusCheckNeeded?()
         }

@@ -2,8 +2,23 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.9
-//  Date: 2026-07-29
+//  Version: 3.4.0
+//  Date: 2026-08-19
+//
+//  =============================================================================
+//  CHANGELOG (v3.4.0) — Desktop Quick Look Focus Fix
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Opening a desktop Quick Look preview no longer steals focus. Guard 1 now
+//      detects the QuickLookUIService helper panel (macOS 14+) as well as
+//      Finder-owned floating panels, not just Finder's normal windows.
+//    — Closing the preview no longer steals focus either. During preview
+//      teardown Finder is frontmost with no standard window, so a new desktop
+//      guard treats "Finder frontmost + no layer-0 window" as the desktop being
+//      the valid foreground and skips recovery.
+//    — FocusEventMonitor defers Finder-triggered checks by 0.8s when a Finder
+//      window event races the Quick Look panel, giving Guard 1 time to see it.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.9) — Frontmost-Only AX Event Filter
