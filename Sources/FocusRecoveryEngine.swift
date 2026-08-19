@@ -32,7 +32,8 @@ final class FocusRecoveryEngine {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         AppLogger.info("Focus check triggered — frontmost: \(frontmostApp?.localizedName ?? "nil") bundleID=\(frontmostApp?.bundleIdentifier ?? "nil")")
 
-        // Guard 1: Quick Look hard block
+        // Guard 1: Quick Look hard block. Space-bar previews are left entirely
+        // to the system — while a preview is up, the engine must not act.
         if isFinderQuickLookActive() {
             AppLogger.info("Guard 1: Finder Quick Look active, skipping recovery")
             return
@@ -65,14 +66,9 @@ final class FocusRecoveryEngine {
 
     // MARK: - Guard 1: Quick Look Detection (CGWindow-based, no AX)
 
+    /// Returns true while Finder Quick Look (space-bar preview) is active.
+    /// Space-bar previews must be left entirely to the system.
     private func isFinderQuickLookActive() -> Bool {
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
-              frontmostApp.bundleIdentifier == "com.apple.finder" else {
-            return false
-        }
-
-        let finderPID = frontmostApp.processIdentifier
-
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
@@ -80,19 +76,32 @@ final class FocusRecoveryEngine {
             return false
         }
 
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let finderPID = frontmost?.bundleIdentifier == "com.apple.finder" ? frontmost?.processIdentifier : nil
         var finderHasNormalWindow = false
         var finderHasFloatingPanel = false
 
         for windowInfo in windowList {
-            guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == finderPID else { continue }
-
             guard let layer = windowInfo[kCGWindowLayer as String] as? Int else { continue }
 
-            if layer == 0 {
-                finderHasNormalWindow = true
-            } else {
-                finderHasFloatingPanel = true
+            // The space-bar preview panel is served by the QuickLookUIService
+            // helper process (macOS 14+), not Finder. Treat any Quick Look
+            // floating window as the preview being active.
+            if let ownerName = windowInfo[kCGWindowOwnerName as String] as? String,
+               ownerName.lowercased().contains("quicklook"),
+               layer > 0 {
+                return true
+            }
+
+            // Legacy detection: Finder's own normal window + floating panel.
+            if let finderPID = finderPID,
+               let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+               ownerPID == finderPID {
+                if layer == 0 {
+                    finderHasNormalWindow = true
+                } else {
+                    finderHasFloatingPanel = true
+                }
             }
         }
 

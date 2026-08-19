@@ -2,8 +2,20 @@
 //  WindowManager_v3.3.0.swift
 //  FocusTrafficLight
 //
-//  Version: 3.3.9
-//  Date: 2026-07-29
+//  Version: 3.3.10
+//  Date: 2026-08-19
+//
+//  =============================================================================
+//  CHANGELOG (v3.3.10) — Quick Look Preview Suppression
+//  =============================================================================
+//
+//  BUG FIX:
+//    — Guard 1 (isFinderQuickLookActive) previously only detected the space-bar
+//      preview panel when it was owned by Finder itself. On macOS 14+ the panel
+//      is served by the QuickLookUIService helper process, so Guard 1 missed it
+//      and the engine could steal focus during a preview.
+//    — Guard 1 now also recognizes Quick Look floating windows regardless of the
+//      owning process, so the engine stays inert while a preview is open.
 //
 //  =============================================================================
 //  CHANGELOG (v3.3.9) — Frontmost-Only AX Event Filter
