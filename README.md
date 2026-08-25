@@ -6,14 +6,19 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 ## Features
 
-- **Automatic Focus Recovery**: When a window is closed or minimized, automatically focuses on the topmost valid window
-- **Smart Guard System**: Four-layer validation ensures focus is only recovered when truly needed
-  - Finder Quick Look detection (no interference during file preview)
-  - Frontmost app visible window detection (skip for dialog/panel scenarios)
-  - Current focused window validity verification
-  - Recovery target strict validation
-- **Multi-window App Support**: Precise window targeting through bounds matching
+- **Keyboard-triggered**: Listens for explicit `Cmd+W` (close window) and `Cmd+M` (minimize window)
+- **Traffic light clicks**: Recognizes red close and yellow minimize button clicks, then transfers focus
+- **App hide focus**: Apps with their own hide shortcuts (WeChat, QQ, Feishu...) focus the next window after hiding
+- **Automatic Focus Recovery**: After the target window disappears, activates the topmost visible window in the current Space
+- **Non-standard app support**: Apps like v2rayN that do not expose AX windows but have real windows are recognized
 - **Menu Bar Control**: Clean menu bar interface with one-click toggle
+
+## Design Notes
+
+- Focus recovery only triggers on explicit user actions: close, minimize, or hide; generic window destruction events never steal focus
+- Candidates are selected directly from `CGWindowList` z-order: `layer 0`, current Space, not this process
+- No AX window role matching is required, so Keynote save panels and v2rayN windows work normally
+- Trigger-to-focus is a single 50ms check with no polling
 
 ## Requirements
 
@@ -34,4 +39,4 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 ## Privacy
 
-This app requires Accessibility permission to monitor window events. The permission is only used for focus management. No user data is collected or transmitted.
+This app requires Accessibility permission to read window state. The permission is only used for focus management. No user data is collected or transmitted.

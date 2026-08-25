@@ -4,7 +4,7 @@
 
 - **Project Name**: FocusTrafficLight
 - **Bundle Identifier**: com.focustrafficlight.app
-- **Core Functionality**: A lightweight menu-bar macOS app that automatically focuses the next logical window when a window is closed, minimized, or an app is quit. Only interacts with "standard windows" possessing traffic light controls.
+- **Core Functionality**: A lightweight menu-bar macOS app that focuses the next logical window after an explicit user action closes, minimizes, or hides the current window. Target selection uses the topmost visible window in the current Space, without requiring AX window metadata.
 - **Target Users**: Power users who want window focus behavior similar to Windows
 - **macOS Version Support**: macOS 13.0+ (Ventura and later)
 
@@ -46,29 +46,24 @@ Quit
 
 ### Core Features
 
-#### 1. Window Event Monitoring (Priority: Critical)
-- Use `AXObserver` to listen for system-wide accessibility events
-- Monitor events:
-  - `kAXUIElementDestroyedNotification` - Window closed
-  - `kAXWindowMiniaturizedNotification` - Window minimized
-  - `kAXUIElementDestroyedNotification` from focused app - App quit
+#### 1. Trigger Monitoring (Priority: Critical)
+- Global keyboard monitor for `Cmd+W` (close window) and `Cmd+M` (minimize window)
+- Mouse event tap for real clicks on red close / yellow minimize buttons
+- AX notifications for apps with their own hide shortcuts (WeChat, QQ, Feishu...)
+- `Cmd+H` is suppressed so the system's own hide behavior is not doubled
 
-#### 2. Traffic Light Filter (Priority: Critical)
-- Only process windows with `kAXCloseButtonAttribute`
-- This filters out:
-  - Input method candidate windows
-  - Tooltips
-  - Floating panels
-  - Menu windows
-  - Other non-standard windows
+#### 2. Trigger Recognition (Priority: Critical)
+- Keyboard and traffic light clicks only count when the source app was recently frontmost
+- Generic window destruction/miniaturization notifications are never used as triggers, preventing false focus steals
 
 #### 3. Focus Logic (Priority: Critical)
-- **Trigger**: Window closed, minimized, or app quit
-- **Debounce**: 150ms wait before attempting focus
+- **Trigger**: Explicit close, minimize, or app hide
+- **Settle**: 50ms after the trigger, then a single check that the target window has left the screen
 - **Selection Algorithm**:
   1. Get all windows in Z-order (front to back)
-  2. Filter: Visible, belongs to active app, has close button
-  3. Focus: Use `AXUIElementPerformAction(window, kAXRaiseAction)` + `NSRunningApplication.activate()`
+  2. Filter: `layer 0`, current Space, owner is not this process
+  3. Focus: `NSRunningApplication.activate(activateIgnoringOtherApps)`
+- No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
 
 #### 4. Accessibility Permission Handling (Priority: Critical)
 - Check permission status on launch
@@ -95,6 +90,8 @@ Quit
 - **Components**:
   - `AppDelegate` - Main application controller
   - `WindowManager` - Handles window focus logic
+  - `FocusEventMonitor` - Keyboard / mouse / hide trigger sources
+  - `FocusRecoveryEngine` - Target window discovery and activation
   - `AccessibilityHelper` - Permission checking and AX utilities
 
 ### Edge Cases & Error Handling
@@ -111,6 +108,7 @@ Quit
 ### Frameworks Used
 - `AppKit` - UI and menu bar
 - `ApplicationServices` - AXUIElement APIs
+- `CoreGraphics` - CGWindowList / CGWindow APIs
 - `ServiceManagement` - SMAppService for launch at login
 - `Cocoa` - Foundation and AppKit
 
@@ -124,7 +122,7 @@ Quit
 
 ### Entitlements
 - App Sandbox: NO (requires accessibility access)
-- Hardened Runtime: YES with accessibility exception
+- Hardened Runtime: NO (local ad-hoc signed build)
 
 ### Asset Requirements
 - None (uses SF Symbols)
@@ -134,10 +132,16 @@ Quit
 FocusTrafficLight/
 ├── project.yml
 ├── SPEC.md
+├── README.md
+├── README_zh.md
+├── CHANGELOG.md
 ├── Sources/
 │   ├── main.swift
 │   ├── AppDelegate.swift
 │   ├── WindowManager.swift
+│   ├── FocusEventMonitor.swift
+│   ├── FocusRecoveryEngine.swift
+│   ├── AppLogger.swift
 │   └── AccessibilityHelper.swift
 ├── Resources/
 │   └── Info.plist
@@ -145,6 +149,23 @@ FocusTrafficLight/
 ```
 
 ## 5. Version History
+
+### v4.0.2 - Single 50ms Check (2026-08-25)
+- Replaced the 1s polling loop with a single 50ms on-screen check
+- Tab-close scenarios (target window still visible) no longer block or wait
+- Window gone means focus the next topmost window; otherwise skip immediately
+
+### v4.0.1 - Simplified Topmost-Window Selection (2026-08-25)
+- Fixed: apps with `activationPolicy == .accessory` but real windows (e.g. v2rayN) were skipped
+- Removed size and activation-policy heuristics from target discovery
+- Target is now simply the first `layer 0` window in the current Space not owned by this process
+- Keynote save panels remain supported without AX window matching
+
+### v4.0.0 - Keyboard-Triggered Focus Recovery (2026-08-24)
+- Replaced broad AXObserver lifecycle monitoring with explicit close/minimize triggers
+- Added traffic light click recognition and app hide notifications
+- Focus recovery only runs after the triggered window actually disappears
+- Removed Quick Look, Finder preview, launch grace, and multi-guard heuristics
 
 ### v2.1.2 - 空间过滤 (2026-05-16)
 - 新增窗口空间过滤功能，只识别当前 Space 中的窗口
