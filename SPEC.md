@@ -53,17 +53,22 @@ Quit
 - `Cmd+H` is suppressed so the system's own hide behavior is not doubled
 
 #### 2. Trigger Recognition (Priority: Critical)
-- Keyboard and traffic light clicks only count when the source app was recently frontmost
-- Generic window destruction/miniaturization notifications are never used as triggers, preventing false focus steals
+- Keyboard and traffic light clicks capture the frontmost app and its target window at event time
+- AX `kAXUIElementDestroyedNotification` / `kAXWindowMiniaturizedNotification` are accepted only when the event PID matches the current frontmost app, acting as a fallback without letting background apps steal focus
+- AX `kAXApplicationHiddenNotification` is accepted regardless of frontmost state, except when it arrives within 0.5s of `Cmd+H` (the system handles that case itself)
+- A 0.2s debounce collapses rapid triggers; auto-repeat key events are ignored
+- The target window is captured as a `CGWindowID` from the keyboard event window, the AX focused window, or the AX element; when unavailable it is treated as already gone
 
 #### 3. Focus Logic (Priority: Critical)
 - **Trigger**: Explicit close, minimize, or app hide
 - **Settle**: 50ms after the trigger, then a single check that the target window has left the screen
+- **Skip**: If the target window is still visible at the check (browser tab close, blank window, slow animation), recovery is skipped without polling or waiting
 - **Selection Algorithm**:
   1. Get all windows in Z-order (front to back)
   2. Filter: `layer 0`, current Space, owner is not this process
   3. Focus: `NSRunningApplication.activate(activateIgnoringOtherApps)`
 - No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
+- No background polling: the engine performs exactly one check per trigger and returns
 
 #### 4. Accessibility Permission Handling (Priority: Critical)
 - Check permission status on launch
@@ -96,9 +101,11 @@ Quit
 
 ### Edge Cases & Error Handling
 1. **No accessibility permission**: Show alert, open System Preferences
-2. **No valid windows to focus**: Do nothing
-3. **App in background**: Handle gracefully
-4. **Rapid close/minimize events**: Debounce prevents rapid switching
+2. **Target window still visible (tab close / blank window)**: Skip recovery immediately
+3. **No valid windows to focus**: Do nothing
+4. **Background AX noise**: Destroyed/miniaturized notifications from non-frontmost apps are filtered by PID
+5. **Rapid close/minimize events**: 0.2s debounce prevents rapid switching
+6. **Slow window teardown**: If the window is still on screen at the 50ms check, the trigger is abandoned and macOS handles focus itself
 
 ## 4. Technical Specification
 
