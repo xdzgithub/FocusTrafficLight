@@ -409,6 +409,15 @@ final class FocusEventMonitor {
                 )
                 return
             }
+
+            // Desktop Quick Look emits window destroy/minimize events from
+            // Finder before the preview panel appears; they are not real
+            // close/minimize actions.
+            if let app = NSRunningApplication(processIdentifier: pid),
+               app.bundleIdentifier == "com.apple.finder" {
+                AppLogger.info("Skip Finder AX \(name) — Quick Look suppression")
+                return
+            }
         }
 
         AppLogger.info(

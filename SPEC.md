@@ -157,6 +157,11 @@ FocusTrafficLight/
 
 ## 5. Version History
 
+### v4.0.3 - Desktop Quick Look Suppression (2026-08-28)
+- Desktop Quick Look emits window destroy/minimize AX events from Finder before the preview panel appears
+- Finder-originated destroy/minimize notifications are now skipped while Finder is frontmost
+- Quick Look open/close no longer triggers focus recovery; explicit close/minimize/hide paths are unchanged
+
 ### v4.0.2 - Single 50ms Check (2026-08-25)
 - Replaced the 1s polling loop with a single 50ms on-screen check
 - Tab-close scenarios (target window still visible) no longer block or wait
