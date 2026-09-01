@@ -157,6 +157,12 @@ FocusTrafficLight/
 
 ## 5. Version History
 
+### v4.0.4 - Hidden Notification Validation (2026-09-01)
+- `kAXApplicationHiddenNotification` is only honored when the app is actually hidden
+- Right-click menus and selection panels that briefly disappear no longer trigger focus recovery
+- A window hidden event is skipped when the source app still has visible windows
+- App-specific hide shortcuts (WeChat, QQ, Feishu) continue to focus the next window
+
 ### v4.0.3 - Desktop Quick Look Suppression (2026-08-28)
 - Desktop Quick Look emits window destroy/minimize AX events from Finder before the preview panel appears
 - Finder-originated destroy/minimize notifications are now skipped while Finder is frontmost

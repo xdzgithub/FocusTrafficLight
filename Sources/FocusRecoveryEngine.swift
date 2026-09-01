@@ -30,6 +30,12 @@ final class FocusRecoveryEngine {
             return
         }
 
+        if context.kind == .windowHidden,
+           appHasVisibleWindows(processID: context.sourcePID) {
+            AppLogger.info("App still has visible windows after hidden event, skipping recovery")
+            return
+        }
+
         guard let app = findTopmostVisibleWindowApp() else {
             AppLogger.info("No visible app window to focus")
             return
@@ -54,6 +60,19 @@ final class FocusRecoveryEngine {
             return true
         }
         return list.contains { ($0[kCGWindowNumber as String] as? Int) == windowID }
+    }
+
+    private func appHasVisibleWindows(processID: pid_t) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return false
+        }
+        return list.contains {
+            ($0[kCGWindowLayer as String] as? Int) == 0 &&
+            ($0[kCGWindowOwnerPID as String] as? pid_t) == processID
+        }
     }
 
     // MARK: - Topmost Visible Window Discovery

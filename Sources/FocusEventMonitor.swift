@@ -401,6 +401,16 @@ final class FocusEventMonitor {
             return
         }
 
+        if name == kAXApplicationHiddenNotification as String {
+            guard let hiddenApp = NSRunningApplication(processIdentifier: pid),
+                  hiddenApp.isHidden else {
+                AppLogger.info(
+                    "Skip AX \(name) — PID=\(pid) is not actually hidden"
+                )
+                return
+            }
+        }
+
         if name != kAXApplicationHiddenNotification as String {
             let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
             guard pid == frontmostPID else {
