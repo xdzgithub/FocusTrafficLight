@@ -294,6 +294,23 @@ final class FocusEventMonitor {
         return nil
     }
 
+    /// Returns true when the element is the Finder desktop window. Desktop
+    /// destroy/minimize events (e.g. during Quick Look) are not real window
+    /// actions, so they are the only Finder events we suppress. Genuine Finder
+    /// window closes/minimizes fall through and schedule focus recovery.
+    private func isFinderDesktopElement(_ element: AXUIElement) -> Bool {
+        guard let windowID = windowID(of: element) else { return false }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        guard let win = list.first(where: { ($0[kCGWindowNumber as String] as? Int) == windowID }) else {
+            return false
+        }
+        let owner = win[kCGWindowOwnerName as String] as? String ?? ""
+        let winName = win[kCGWindowName as String] as? String ?? ""
+        return winName == "Desktop" || (owner == "Finder" && winName.hasPrefix("Desktop"))
+    }
+
     private func canTriggerNow() -> Bool {
         let now = Date().timeIntervalSince1970
         guard now - lastTriggerAt >= debounceInterval else { return false }
@@ -436,8 +453,10 @@ final class FocusEventMonitor {
             // close/minimize actions.
             if let app = NSRunningApplication(processIdentifier: pid),
                app.bundleIdentifier == "com.apple.finder" {
-                AppLogger.info("Skip Finder AX \(name) — Quick Look suppression")
-                return
+                if isFinderDesktopElement(element) {
+                    AppLogger.info("Skip Finder AX \(name) — Desktop/Quick Look suppression")
+                    return
+                }
             }
         }
 
