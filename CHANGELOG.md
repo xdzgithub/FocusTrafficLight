@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.0.5 - 2026-09-11
+
+- 修复：Chrome 下载浮层打开文件时，Archive Utility 等临时系统工具销毁窗口被误判为应用隐藏，导致焦点被抢回 Chrome
+- 跳过 Archive Utility、Disk Image Mounter 的 AX 窗口通知，不再对临时系统工具执行焦点恢复
+- 保留微信/QQ、飞书隐藏，`Cmd+W` / `Cmd+M`、红黄点点击和桌面 Quick Look 的现有行为
+
 ## v4.0.4 - 2026-09-01
 
 - 修复：右键菜单、框选等临时 UI 消失被误判为应用隐藏，导致焦点被抢到其他窗口

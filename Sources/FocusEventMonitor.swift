@@ -28,6 +28,14 @@ struct FocusTriggerContext {
 ///     windows through an app-specific shortcut
 final class FocusEventMonitor {
 
+    /// System helper apps that open a transient progress window and quit.
+    /// Their window destruction is not a user hide action and must be left to
+    /// macOS, otherwise recovery can pull focus back to the previous app.
+    private static let transientSystemBundleIdentifiers: Set<String> = [
+        "com.apple.archiveutility",
+        "com.apple.DiskImageMounter"
+    ]
+
     private struct TrafficLightHit {
         let kind: FocusTriggerContext.Kind
         let pid: pid_t
@@ -329,6 +337,9 @@ final class FocusEventMonitor {
     private func observeApp(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
         guard observers[pid] == nil else { return }
+        guard !Self.transientSystemBundleIdentifiers.contains(app.bundleIdentifier ?? "") else {
+            return
+        }
 
         var observer: AXObserver?
         let callback: AXObserverCallback = { _, element, notification, refcon in
