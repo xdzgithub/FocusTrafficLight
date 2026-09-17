@@ -75,12 +75,32 @@ final class FocusRecoveryEngine {
         /// display, so acting on one screen does not hand focus to another. nil for
         /// an app-hide trigger, which carries no window.
         let displayID: CGDirectDisplayID?
+        /// The app's accessibility window count when the trigger fired, for the
+        /// hide path (see `dismissalOutcome`).
+        let initialWindowCount: Int?
 
         /// A minimize keeps its accessibility entry for the whole animation, so it
-        /// is decided from the on-screen list alone (see `dismissalPendingReason`).
+        /// is decided from the on-screen list alone (see `dismissalOutcome`).
         var isMinimize: Bool {
             kind == .minimizeWindow || kind == .minimizeButton
         }
+
+        /// An app-hide trigger carries no window ID, so it is decided from the
+        /// app's window count instead.
+        var isAppHide: Bool {
+            kind == .windowHidden
+        }
+    }
+
+    /// What the poll concluded.
+    private enum DismissalOutcome {
+        /// The window really went away: focus the next one.
+        case dismissed
+        /// The app kept windows, so focus does not need to move. Decided, not an
+        /// error — stop without waiting further.
+        case hold(reason: String)
+        /// Not yet known; keep polling until the bound.
+        case pending(reason: String)
     }
 
     init(accessibilityHelper: AccessibilityHelper) {
@@ -149,7 +169,10 @@ final class FocusRecoveryEngine {
             sourcePID: context.sourcePID,
             windowID: context.targetWindowID,
             windowBounds: context.targetWindowID.flatMap { snapshot.bounds(ofWindowID: $0) },
-            displayID: triggeredDisplay
+            displayID: triggeredDisplay,
+            initialWindowCount: context.kind == .windowHidden
+                ? windowOrder.accessibilityWindows(ownerPID: context.sourcePID)?.count
+                : nil
         )
 
         wait(pending: pending, token: token, waited: 0)
@@ -161,18 +184,22 @@ final class FocusRecoveryEngine {
         // A newer trigger owns the decision now.
         guard token == currentCheckToken else { return }
 
-        let reason = dismissalPendingReason(pending)
+        switch dismissalOutcome(pending) {
+        case .hold(let reason):
+            AppLogger.notice("Not recovering — \(reason)")
+            return
 
-        if let reason {
-            absentPolls = 0
-            guard waited < dismissalTimeout else {
-                AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
-                return
-            }
-        } else {
+        case .dismissed:
             absentPolls += 1
             if absentPolls >= requiredAbsentPolls {
                 focusNextWindow(sourcePID: pending.sourcePID, onDisplay: pending.displayID)
+                return
+            }
+
+        case .pending(let reason):
+            absentPolls = 0
+            guard waited < dismissalTimeout else {
+                AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
                 return
             }
         }
@@ -183,24 +210,13 @@ final class FocusRecoveryEngine {
         }
     }
 
-    /// Returns what we are still waiting for, or nil once the window is dismissed.
+    /// Decides whether the acted-on window is gone.
     ///
-    /// Kept cheap: this runs in a 15ms poll loop, so it does one narrow query per
-    /// call.
-    private func dismissalPendingReason(_ pending: Pending) -> String? {
-        guard let windowID = pending.windowID, windowID > 0 else {
-            // An app-hide trigger carries no window ID: the accessibility element is
-            // destroyed before the notification arrives, so its frame — and hence its
-            // window ID — can no longer be read. Wait on the app losing its windows,
-            // requiring both signals to clear, so the engine neither fires while a
-            // window is still visible nor concludes "still there" when only the
-            // slower on-screen list has caught up.
-            if let windows = windowOrder.accessibilityWindows(ownerPID: pending.sourcePID), !windows.isEmpty {
-                return "PID \(pending.sourcePID) to lose its windows"
-            }
-            return windowOrder.visibleLayer0WindowCount(ownerPID: pending.sourcePID) == 0
-                ? nil
-                : "PID \(pending.sourcePID) to lose its windows"
+    /// Kept cheap: this runs in a poll loop, so it does one narrow query per call.
+    private func dismissalOutcome(_ pending: Pending) -> DismissalOutcome {
+        let windowID = pending.windowID ?? 0
+        guard windowID > 0 else {
+            return appHideOutcome(pending)
         }
 
         // A minimize keeps its accessibility entry (marked minimized) for the whole
@@ -209,7 +225,9 @@ final class FocusRecoveryEngine {
         // from being stolen mid-animation. The on-screen check is used exclusively:
         // during the animation the app's accessibility server stops answering.
         if pending.isMinimize {
-            return windowOrder.isWindowOnScreen(windowID: windowID) ? "window \(windowID) to minimize" : nil
+            return windowOrder.isWindowOnScreen(windowID: windowID)
+                ? .pending(reason: "window \(windowID) to minimize")
+                : .dismissed
         }
 
         // A close removes the window from the app's accessibility window list at
@@ -227,12 +245,50 @@ final class FocusRecoveryEngine {
                       abs(frame.width - bounds.width) <= 2, abs(frame.height - bounds.height) <= 2 else {
                     continue
                 }
-                if AXGeometry.isMinimized(window) { return nil }
-                return "window \(windowID) to be dismissed"
+                if AXGeometry.isMinimized(window) { return .dismissed }
+                return .pending(reason: "window \(windowID) to be dismissed")
             }
-            if readableFrames > 0 { return nil }
+            if readableFrames > 0 { return .dismissed }
         }
-        return windowOrder.isWindowOnScreen(windowID: windowID) ? "window \(windowID) to be dismissed" : nil
+        return windowOrder.isWindowOnScreen(windowID: windowID)
+            ? .pending(reason: "window \(windowID) to be dismissed")
+            : .dismissed
+    }
+
+    /// Decides an app-hide trigger from the app's window count alone.
+    ///
+    /// This deliberately ignores the on-screen list, which only clears once the
+    /// hide/close animation finishes (~400ms for WeChat) even though the app has
+    /// already given the window up. The accessibility window count drops as soon
+    /// as the window is gone (~140ms), so waiting on it roughly triples the
+    /// responsiveness.
+    ///
+    /// Reading the count rather than just "are there any windows left" also keeps
+    /// the false positives out that this path used to need both signals for: a
+    /// dismissed menu or panel leaves the app's window count unchanged, so it can
+    /// never be mistaken for a window going away.
+    private func appHideOutcome(_ pending: Pending) -> DismissalOutcome {
+        let pid = pending.sourcePID
+
+        guard let current = windowOrder.accessibilityWindows(ownerPID: pid)?.count else {
+            // The app's window list cannot be read; fall back to the slower
+            // on-screen signal rather than guessing.
+            return windowOrder.visibleLayer0WindowCount(ownerPID: pid) == 0
+                ? .dismissed
+                : .pending(reason: "PID \(pid) to lose its windows")
+        }
+
+        let initial = pending.initialWindowCount ?? current
+        if current == 0 {
+            // No windows left: the app really gave its window up.
+            return .dismissed
+        }
+        if current < initial {
+            // A window went away but the app kept others, so focus does not need
+            // to move. Decided now instead of waiting out the bound.
+            return .hold(reason: "PID \(pid) still has \(current) window(s)")
+        }
+        return .pending(reason: "PID \(pid) to give up a window (has \(current))")
     }
 
     private func focusNextWindow(sourcePID: pid_t, onDisplay displayID: CGDirectDisplayID?) {

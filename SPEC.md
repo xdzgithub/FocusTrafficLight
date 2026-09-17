@@ -69,7 +69,7 @@ Quit
 - **Evidence per dismissal kind**:
   - **close** — the window leaves the app's accessibility window list (~140–225ms), which is well before it leaves the on-screen list, so that list decides
   - **minimize** — the window keeps its accessibility entry (gaining only a minimized flag) for the whole animation, so the on-screen list decides; the accessibility read is also avoided there because the app's accessibility server stops answering for ~500ms mid-animation
-  - **hide** — no window ID is available (the element is destroyed before the notification), so the app losing its windows decides
+  - **hide** — no window ID is available (the element is destroyed before the notification), so the app's *window count* decides and nothing else. It drops as soon as the window is given up (~140ms for WeChat), whereas the on-screen list lags until the hide/close animation ends (~400ms), so waiting on the count roughly triples the responsiveness. A count that merely stays the same (a dismissed menu or panel) never fires, which is what keeps the false positives out without needing the on-screen signal as well
 - **Confirmation**: two consecutive agreeing polls, so a single transient read cannot move focus while the window is still on screen
 - **Instant filters** (no timing involved): acting on one of several windows that leaves another on the same display does nothing; the source app is never the candidate; a next window on the same display is preferred
 - **Selection Algorithm**:
