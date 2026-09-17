@@ -17,7 +17,7 @@ struct FocusTriggerContext {
     let targetWindowID: Int?
 }
 
-/// V4 event source: keyboard shortcuts, traffic light clicks, and app-hide
+/// V5 event source: keyboard shortcuts, traffic light clicks, and app-hide
 /// notifications from apps with their own hide shortcuts (WeChat, QQ, Feishu...).
 ///
 /// Explicit user actions can schedule focus recovery:
@@ -26,6 +26,12 @@ struct FocusTriggerContext {
 ///   - a real mouse click on the red close / yellow minimize button
 ///   - a frontmost app hides itself or removes all of its traffic-light
 ///     windows through an app-specific shortcut
+///
+/// macOS 27 notes: the private `AXCGWindowID` attribute no longer exists, so an
+/// accessibility element can no longer be mapped back to its `CGWindowID`. The
+/// target window is now identified through `WindowOrderService` instead, and the
+/// Finder desktop / Quick Look filter uses geometry rather than window titles
+/// (titles require Screen Recording and read as empty without it).
 final class FocusEventMonitor {
 
     /// System helper apps that open a transient progress window and quit.
@@ -52,9 +58,13 @@ final class FocusEventMonitor {
     private var observers: [pid_t: (observer: AXObserver, runLoopSource: CFRunLoopSource, retainedSelf: UnsafeMutableRawPointer)] = [:]
     private var lastCmdHAt: TimeInterval = 0
 
-    private let settleDelay: TimeInterval = 0.05
+    /// Short settle so the window server has recorded the user's action before
+    /// the recovery check starts polling.
+    private let settleDelay: TimeInterval = 0.03
     private let debounceInterval: TimeInterval = 0.2
     private var lastTriggerAt: TimeInterval = 0
+
+    private let windowOrder = WindowOrderService()
 
     /// Called shortly after the user closes/minimizes a window.
     var onFocusCheckNeeded: ((FocusTriggerContext) -> Void)?
@@ -83,7 +93,7 @@ final class FocusEventMonitor {
             object: nil
         )
 
-        AppLogger.info("Focus event sources started (Cmd+W / Cmd+M / traffic lights / app hide)")
+        AppLogger.notice("Focus event sources started (Cmd+W / Cmd+M / traffic lights / app hide)")
     }
 
     func stopMonitoring() {
@@ -119,7 +129,17 @@ final class FocusEventMonitor {
         guard canTriggerNow() else { return }
 
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
-        let windowID = event.windowNumber != 0 ? event.windowNumber : frontmostWindowID()
+        let snapshot = windowOrder.takeSnapshot()
+        // The key event's window number is the window being closed/minimized.
+        // Synthetic and replayed events can carry a stale or foreign number, so
+        // only trust it when it really belongs to the frontmost app; otherwise
+        // fall back to that app's frontmost window.
+        let windowID: Int?
+        if event.windowNumber != 0, snapshot.ownerPID(ofWindowID: event.windowNumber) == pid {
+            windowID = event.windowNumber
+        } else {
+            windowID = snapshot.topmostWindow(ownerPID: pid)?.windowID
+        }
 
         schedule(
             FocusTriggerContext(
@@ -135,7 +155,7 @@ final class FocusEventMonitor {
     private func startMouseEventTap() {
         guard mouseEventTap == nil else { return }
 
-        AppLogger.info(
+        AppLogger.notice(
             "Mouse tap setup: AX trusted=\(AXIsProcessTrusted()) tapExists=\(mouseEventTap != nil)"
         )
 
@@ -160,10 +180,10 @@ final class FocusEventMonitor {
             callback: callback,
             userInfo: selfPtr
         ) else {
-            AppLogger.info("Traffic light mouse tap unavailable (Accessibility or Input Monitoring permission needed)")
+            AppLogger.notice("Traffic light mouse tap unavailable (Accessibility or Input Monitoring permission needed)")
             return
         }
-        AppLogger.info("Traffic light mouse tap created")
+        AppLogger.notice("Traffic light mouse tap created")
 
         let tapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         mouseEventTap = tap
@@ -179,7 +199,7 @@ final class FocusEventMonitor {
         }
         mouseTapThread?.name = "FocusTrafficLight.MouseTap"
         mouseTapThread?.start()
-        AppLogger.info("Traffic light mouse tap thread starting")
+        AppLogger.debug("Traffic light mouse tap thread starting")
     }
 
     private func stopMouseEventTap() {
@@ -204,12 +224,12 @@ final class FocusEventMonitor {
 
     private func handleMouseDownOnMain(at point: CGPoint) {
         guard let hit = trafficLightHit(at: point) else {
-            AppLogger.info("Mouse down at \(Int(point.x)),\(Int(point.y)) did not hit a traffic light")
+            AppLogger.debug("Mouse down at \(Int(point.x)),\(Int(point.y)) did not hit a traffic light")
             return
         }
         guard canTriggerNow() else { return }
 
-        AppLogger.info(
+        AppLogger.notice(
             "Traffic light clicked: \(hit.kind.rawValue) PID=\(hit.pid) (\(NSRunningApplication(processIdentifier: hit.pid)?.localizedName ?? "?"))"
         )
 
@@ -248,20 +268,34 @@ final class FocusEventMonitor {
                 return TrafficLightHit(
                     kind: kind,
                     pid: pid,
-                    windowID: windowID(of: element)
+                    windowID: enclosingWindowID(of: element)
                 )
             }
 
-            guard let parent = parent(of: element) else { break }
+            guard let parent = AXGeometry.parent(of: element) else { break }
             element = parent
         }
 
         return nil
     }
 
+    /// Walks up from a traffic light button to its window and resolves that
+    /// window's `CGWindowID` by frame.
+    private func enclosingWindowID(of element: AXUIElement) -> Int? {
+        var current: AXUIElement? = element
+        for _ in 0..<8 {
+            guard let candidate = current else { return nil }
+            if (AXGeometry.attribute(of: candidate, key: kAXRoleAttribute as CFString) as? String) == kAXWindowRole as String {
+                return windowID(of: candidate)
+            }
+            current = AXGeometry.parent(of: candidate)
+        }
+        return nil
+    }
+
     private func trafficLightKind(of element: AXUIElement) -> FocusTriggerContext.Kind? {
-        let subrole = attribute(of: element, key: kAXSubroleAttribute as CFString) as? String
-        let role = attribute(of: element, key: kAXRoleAttribute as CFString) as? String
+        let subrole = AXGeometry.attribute(of: element, key: kAXSubroleAttribute as CFString) as? String
+        let role = AXGeometry.attribute(of: element, key: kAXRoleAttribute as CFString) as? String
 
         if subrole == kAXCloseButtonSubrole as String || role == kAXCloseButtonAttribute as String {
             return .closeButton
@@ -272,43 +306,35 @@ final class FocusEventMonitor {
         return nil
     }
 
-    private func frontmostWindowID() -> Int? {
-        let systemWide = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedWindowAttribute as CFString, &value) == .success,
-              let window = value as! AXUIElement? else {
-            return nil
-        }
-        return windowID(of: window)
-    }
-
     private func windowID(of element: AXUIElement) -> Int? {
-        var current = element
-        for _ in 0..<4 {
-            if (attribute(of: current, key: kAXRoleAttribute as CFString) as? String) == kAXWindowRole as String {
-                return attribute(of: current, key: "AXCGWindowID" as CFString) as? Int
-            }
-            guard let parent = parent(of: current) else { return nil }
-            current = parent
-        }
-        return nil
+        guard let frame = AXGeometry.frame(of: element) else { return nil }
+        return windowOrder.takeSnapshot().windowID(matchingFrame: frame)
     }
 
-    /// Returns true when the element is the Finder desktop window. Desktop
-    /// destroy/minimize events (e.g. during Quick Look) are not real window
-    /// actions, so they are the only Finder events we suppress. Genuine Finder
-    /// window closes/minimizes fall through and schedule focus recovery.
-    private func isFinderDesktopElement(_ element: AXUIElement) -> Bool {
-        guard let windowID = windowID(of: element) else { return false }
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
-            return false
+    /// Returns true when a Finder destroy/minimize notification should be
+    /// suppressed as desktop / Quick Look noise.
+    ///
+    /// A destroyed element cannot be inspected — reading its subrole or frame
+    /// fails — so the destroyed element itself is useless as evidence. The app
+    /// element is still readable, and Finder reports the desktop as a window in
+    /// that list, so the discriminator is whether any *standard* Finder window
+    /// exists. If none does, only the desktop was involved and nothing real was
+    /// closed.
+    ///
+    /// Genuine Finder close/minimize is still recovered through the Cmd+W /
+    /// Cmd+M and traffic-light-click triggers, which do not depend on this path.
+    private func isFinderDesktopNoise(pid: pid_t) -> Bool {
+        guard let appElement = AXUIElementCreateApplication(pid) as AXUIElement?,
+              let windows = AXGeometry.attribute(of: appElement, key: kAXWindowsAttribute as CFString) as? [AXUIElement] else {
+            return true
         }
-        guard let win = list.first(where: { ($0[kCGWindowNumber as String] as? Int) == windowID }) else {
-            return false
+        let hasStandardWindow = windows.contains {
+            (AXGeometry.attribute(of: $0, key: kAXSubroleAttribute as CFString) as? String) == kAXStandardWindowSubrole as String
         }
-        let owner = win[kCGWindowOwnerName as String] as? String ?? ""
-        let winName = win[kCGWindowName as String] as? String ?? ""
-        return winName == "Desktop" || (owner == "Finder" && winName.hasPrefix("Desktop"))
+        if !hasStandardWindow {
+            AppLogger.notice("Skip Finder AX event — no standard Finder window (desktop/Quick Look noise)")
+        }
+        return !hasStandardWindow
     }
 
     private func canTriggerNow() -> Bool {
@@ -319,7 +345,7 @@ final class FocusEventMonitor {
     }
 
     private func schedule(_ context: FocusTriggerContext) {
-        AppLogger.info(
+        AppLogger.notice(
             "Focus trigger queued: \(context.kind.rawValue) PID=\(context.sourcePID) window=\(context.targetWindowID.map(String.init) ?? "?")"
         )
 
@@ -367,6 +393,7 @@ final class FocusEventMonitor {
 
         guard AXObserverCreate(pid, callback, &observer) == .success,
               let observer = observer else {
+            AppLogger.notice("AXObserver unavailable for PID=\(pid) (\(app.localizedName ?? "?"))")
             return
         }
 
@@ -383,10 +410,13 @@ final class FocusEventMonitor {
         for name in notifications {
             if AXObserverAddNotification(observer, appElement, name, retainedSelf) == .success {
                 registered += 1
+            } else {
+                AppLogger.notice("AXObserverAddNotification failed: \(name) PID=\(pid)")
             }
         }
         guard registered > 0 else {
             _ = Unmanaged<FocusEventMonitor>.fromOpaque(retainedSelf)
+            AppLogger.notice("No AX notifications registered for PID=\(pid) (\(app.localizedName ?? "?"))")
             return
         }
 
@@ -432,7 +462,7 @@ final class FocusEventMonitor {
         if name == kAXApplicationHiddenNotification as String {
             guard let hiddenApp = NSRunningApplication(processIdentifier: pid),
                   hiddenApp.isHidden else {
-                AppLogger.info(
+                AppLogger.notice(
                     "Skip AX \(name) — PID=\(pid) is not actually hidden"
                 )
                 return
@@ -442,7 +472,7 @@ final class FocusEventMonitor {
         if name != kAXApplicationHiddenNotification as String {
             let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
             guard pid == frontmostPID else {
-                AppLogger.info(
+                AppLogger.notice(
                     "Skip AX \(name) — PID=\(pid) not frontmost (\(frontmostPID))"
                 )
                 return
@@ -452,15 +482,17 @@ final class FocusEventMonitor {
             // Finder before the preview panel appears; they are not real
             // close/minimize actions.
             if let app = NSRunningApplication(processIdentifier: pid),
-               app.bundleIdentifier == "com.apple.finder" {
-                if isFinderDesktopElement(element) {
-                    AppLogger.info("Skip Finder AX \(name) — Desktop/Quick Look suppression")
-                    return
-                }
+               app.bundleIdentifier == "com.apple.finder",
+               isFinderDesktopNoise(pid: pid) {
+                return
             }
         }
 
-        AppLogger.info(
+        // Finder's desktop element is destroyed and recreated in bursts (Quick
+        // Look, desktop interactions), so collapse them like the other triggers.
+        guard canTriggerNow() else { return }
+
+        AppLogger.notice(
             "AX hide event: \(name) PID=\(pid) (\(NSRunningApplication(processIdentifier: pid)?.localizedName ?? "?"))"
         )
 
@@ -470,22 +502,5 @@ final class FocusEventMonitor {
             targetWindowID: windowID(of: element)
         )
         schedule(context)
-    }
-
-    private func attribute(of element: AXUIElement, key: CFString) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, key, &value) == .success else {
-            return nil
-        }
-        return value
-    }
-
-    private func parent(of element: AXUIElement) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success,
-              let parent = value else {
-            return nil
-        }
-        return parent as! AXUIElement? ?? nil
     }
 }

@@ -56,6 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkAccessibilityPermissions() {
+        AppLogger.notice(
+            "Permissions — accessibility=\(accessibilityHelper.checkAccessibilityPermission()) inputMonitoring=\(accessibilityHelper.inputMonitoringStatus()) screenRecording=\(accessibilityHelper.screenRecordingGranted())"
+        )
+
         // Check if permission already granted
         if accessibilityHelper.checkAccessibilityPermission() {
             return

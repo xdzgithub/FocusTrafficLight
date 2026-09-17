@@ -1,5 +1,22 @@
 # Changelog
 
+## v5.0.0 - 2026-09-17
+
+macOS 27 适配版本。功能行为与 v4.x 保持一致，但底层实现换成公开 API —— macOS 27 移除了 v4.x 依赖的几个私有接口。
+
+- 修复：macOS 27 上窗口身份无法识别。私有 AX 属性 `AXCGWindowID` 已被移除（实测返回 `kAXErrorAttributeUnsupported` / `kAXErrorNoValue`），导致目标窗口号恒为空、「目标窗口是否已消失」检查永久短路。改用公开的 `NSWindow.windowNumbers(options: [.allApplications])` 获取窗口号，并用 `CGWindowListCopyWindowInfo` 的 bounds 做几何匹配
+- 修复：多 Space / 多显示器下焦点会跑到其他 Space。私有符号 `CGSSpaceCopyCurrent`、`CGSCopySpacesForWindow` 在 macOS 27 已不存在（dlsym 失败后 fail-open，过滤等于失效）。Space 过滤改由 `NSWindow.windowNumbers` 的「当前 Space」语义承担，不再使用任何私有 API
+- 修复：Finder 桌面 / Quick Look 抑制在 macOS 27 失效。原实现依赖 `kCGWindowName`，而未授权屏幕录制时窗口名为空。改为判断 Finder 是否还存在标准窗口；同时给 AX 通知补上缺失的去抖，Finder 桌面元素被销毁重建时不再产生重复触发
+- 优化：聚焦速度恢复到接近 v4.x 的手感。改用更早的判定信号 —— 窗口「已关闭/已隐藏」在辅助功能（AX）窗口列表里约 281ms 就反映出来，而在屏幕合成列表里要等到约 569ms；轮询间隔同时从 50ms 收紧到 25ms。实测端到端（判定→激活被接受）：`Cmd+W` 约 50ms（此前约 510ms），应用隐藏约 280ms（已贴近 281ms 的信号物理下限）
+- 优化：关闭 / 最小化时若源应用还有 2 个及以上可见窗口，直接瞬间跳过判定——焦点本来就不需要移动，无需等待
+- 加强：判定需连续两次轮询一致才动作，避免单次 AX 读取瞬时失败被误当成「窗口已消失」而抢焦点
+- 修复：应用隐藏后不聚焦下一个窗口（微信/QQ/飞书等自带隐藏快捷键的场景）。隐藏时窗口同样需要约 350ms 才从「在屏」列表消失，而 AX 的窗口销毁通知约 130ms 就到了，原代码只做一次即时检查，因此每次都判定「应用仍有可见窗口」而跳过。改为等待该应用的窗口真正消失；如果窗口始终保留（如右键菜单消失但主窗口仍在），超时后跳过。该限制同时保证了「关闭多个窗口中的一个」不会误抢焦点
+- 修复：关闭窗口后常常不聚焦下一个应用。实测 macOS 27 上关闭动画期间窗口会一直留在「在屏」列表中（至约 569ms），而 v4.x 只在触发后 50ms 检查一次，因此永远看不到窗口消失、每次都判定「未关闭」而跳过。改为按上述更早的信号判定；窗口确实保留（如关闭浏览器标签页）的场景仍会跳过
+- 修复：激活操作可能被系统静默忽略。`activate(options: [.activateIgnoringOtherApps])` 中的该选项自 macOS 14 起就「不会生效」，且原代码丢弃了返回值。改为按序尝试「AX frontmost → activate(from:options:) → activate(options: [.activateAllWindows])」，逐步校验并记录结果
+- 改进：关键链路日志从 `info` 改为 `notice` 并写盘持久化。原先 `log show` 默认查不到、且只保留几分钟，出故障无法回溯。启动时输出辅助功能 / 输入监控 / 屏幕录制授权状态，AXObserver 注册失败不再静默
+- 改进：签名改用本地证书（`Focus TrafficLight Local Signing`）。此前 ad-hoc 签名把辅助功能授权绑定在二进制哈希上，每次重新编译都会被 macOS 27 撤销、需重新授权
+- 要求：最低系统版本提升至 macOS 27.0
+
 ## v4.0.6 - 2026-09-11
 
 - 修复：Finder 关闭最后一个窗口后，不聚焦下一个置顶应用

@@ -22,7 +22,7 @@ final class WindowManager {
     func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
-        AppLogger.info("Starting")
+        AppLogger.notice("Starting")
         eventMonitor.startMonitoring()
     }
 

@@ -14,7 +14,7 @@ macOS 菜单栏应用，自动管理窗口焦点恢复。
 
 ## 系统要求
 
-- macOS（已在 macOS 15 测试，其他版本自测）
+- macOS 27 及以上
 - 需要辅助功能权限
 
 ## 安装
@@ -28,6 +28,17 @@ macOS 菜单栏应用，自动管理窗口焦点恢复。
 - 点击菜单栏图标查看状态
 - "Enable Focus" 开关控制是否启用焦点恢复
 - "Launch at Login" 设置开机自启
+
+## 排查问题
+
+应用的决策过程会写入统一日志，可用以下命令实时查看：
+
+```sh
+log stream --predicate 'subsystem == "com.focustrafficlight.app"' --level notice
+```
+
+正常时应依次出现 `Permissions — accessibility=true`、`Traffic light mouse tap created`，
+以及 `Focus trigger queued` → `Focus check triggered` → `Focusing: <应用名>` → `Activate <应用名> via … frontmost=true`。
 
 ## 隐私
 

@@ -14,7 +14,7 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 ## Requirements
 
-- macOS (tested on macOS 15, others untested)
+- macOS 27 or later
 - Accessibility permission required
 
 ## Installation
@@ -28,6 +28,17 @@ A macOS menu bar app that automatically manages window focus recovery.
 - Click menu bar icon to view status
 - "Enable Focus" toggle to enable/disable focus recovery
 - "Launch at Login" to set startup behavior
+
+## Troubleshooting
+
+The app logs its decision path to the unified log. To watch it, run:
+
+```sh
+log stream --predicate 'subsystem == "com.focustrafficlight.app"' --level notice
+```
+
+Healthy output shows `Permissions — accessibility=true`, `Traffic light mouse tap created`, then
+`Focus trigger queued` → `Focus check triggered` → `Focusing: <app>` → `Activate <app> via … frontmost=true`.
 
 ## Privacy
 

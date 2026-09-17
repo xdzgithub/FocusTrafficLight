@@ -6,7 +6,7 @@
 - **Bundle Identifier**: com.focustrafficlight.app
 - **Core Functionality**: A lightweight menu-bar macOS app that focuses the next logical window after an explicit user action closes, minimizes, or hides the current window. Target selection uses the topmost visible window in the current Space, without requiring AX window metadata.
 - **Target Users**: Power users who want window focus behavior similar to Windows
-- **macOS Version Support**: macOS 13.0+ (Ventura and later)
+- **macOS Version Support**: macOS 27.0+
 
 ## 2. UI/UX Specification
 
@@ -55,20 +55,44 @@ Quit
 #### 2. Trigger Recognition (Priority: Critical)
 - Keyboard and traffic light clicks capture the frontmost app and its target window at event time
 - AX `kAXUIElementDestroyedNotification` / `kAXWindowMiniaturizedNotification` are accepted only when the event PID matches the current frontmost app, acting as a fallback without letting background apps steal focus
-- AX `kAXApplicationHiddenNotification` is accepted regardless of frontmost state, except when it arrives within 0.5s of `Cmd+H` (the system handles that case itself)
+- AX `kAXApplicationHiddenNotification` / `AXUIElementDestroyed` is accepted regardless of frontmost state, except when it arrives within 0.5s of `Cmd+H`
+- App-hide triggers carry no window ID: the accessibility element is destroyed before the notification arrives, so the engine waits on whether the source app still owns a visible window instead
 - A 0.2s debounce collapses rapid triggers; auto-repeat key events are ignored
-- The target window is captured as a `CGWindowID` from the keyboard event window, the AX focused window, or the AX element; when unavailable it is treated as already gone
+- The target window is captured as a `CGWindowID` from the keyboard event window (only when that window really belongs to the frontmost app) or from the frontmost window of the source app; when unavailable it is treated as already gone
+- The AX-notification path applies the same 0.2s debounce as the keyboard path, so a burst of desktop destroy/recreate events collapses into one check
 
 #### 3. Focus Logic (Priority: Critical)
 - **Trigger**: Explicit close, minimize, or app hide
-- **Settle**: 50ms after the trigger, then a single check that the target window has left the screen
-- **Skip**: If the target window is still visible at the check (browser tab close, blank window, slow animation), recovery is skipped without polling or waiting
+- **Instant skip**: when the trigger is a close/minimize and the source app still has two or more visible windows, focus does not need to move at all — decided immediately, with no waiting
+- **Otherwise**: wait for the triggered window to disappear, polling every 25ms up to an 800ms bound
+- **Why waiting is required**: the window-out signal always trails the user action. Measured on macOS 27 (Finder close): the accessibility window list drops the window at ~281ms, while it stays composited on screen until ~569ms (alpha begins fading at ~339ms). An app hide is faster: the accessibility destroy notification arrives at ~130ms and the window leaves the screen at ~400ms. v4.x sampled once at 50ms, so it always concluded "still there" and skipped every recovery
+- **Which signal decides**: the accessibility window list, because it reflects the close/hide about twice as early; the on-screen list takes over when no frame could be read (a frame that fails to read is never treated as absence)
+- **What is waited on**:
+  - a specific window ID, when the trigger resolved one (keyboard, traffic-light click)
+  - otherwise, for an app-hide trigger, whether the source app still owns a visible window (the accessibility element is already destroyed when the notification arrives, so its frame — and therefore its window ID — can no longer be read). Both the accessibility list and the on-screen list must clear, so the engine neither fires while a window is still visible nor concludes "still there" when only the slower list has caught up
+- **Confirmation**: two consecutive agreeing polls are required, so a single transient accessibility read cannot move focus while the window is still on screen
+- **Skip**: If the window, or the hidden app's windows, are still visible when the bound elapses (browser tab close, menu dismissal, an app that keeps other windows), recovery is skipped
+- **Supersede**: a newer trigger invalidates an in-flight re-check via a token, so rapid close/minimize/hide sequences cannot race
+- **Measured end-to-end** (decision to accepted activation, macOS 27): Cmd+W ~50ms, app hide ~280ms — the latter close to the ~281ms signal floor
 - **Selection Algorithm**:
-  1. Get all windows in Z-order (front to back)
-  2. Filter: `layer 0`, current Space, owner is not this process
-  3. Focus: `NSRunningApplication.activate(activateIgnoringOtherApps)`
+  1. Get all windows visible on the active Space in front-to-back z-order
+  2. Filter: `layer 0`, owner is neither this process nor the source app (the source app's window may briefly outlive it, and the point is to move focus away from it)
+  3. Focus via the activation strategy below
 - No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
-- No background polling: the engine performs exactly one check per trigger and returns
+- No background polling: the re-check runs only in response to a trigger and always terminates
+
+#### 3a. Window Ordering and Space Filtering (Priority: Critical)
+- `NSWindow.windowNumbers(options: [.allApplications])` returns visible windows on the **active Space** in z-order; this is the public API that replaces the private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow` symbols used before v5.0.0
+- `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements])` supplies owner PID, layer and bounds for those window numbers. These keys do not require Screen Recording; window titles do, so no title is ever read
+- If `windowNumbers` returns nothing the engine falls back to the CG list and logs that the result is not Space-filtered, rather than failing silently
+
+#### 3b. Activation Strategy (Priority: Critical)
+- Attempted in order, each step verified against `NSWorkspace.shared.frontmostApplication` and logged:
+  1. `kAXFrontmostAttribute` on the target app (plus `kAXRaiseAction` / `kAXMainAttribute` on the matching window)
+  2. `NSRunningApplication.activate(from:options:)` — cooperative activation, macOS 14+
+  3. `NSRunningApplication.activate(options: [.activateAllWindows])`
+- `NSApplicationActivateIgnoringOtherApps` is not used: it is documented as having no effect since macOS 14
+- The target window element is matched to the chosen `CGWindowID` by comparing `kAXPositionAttribute` / `kAXSizeAttribute` with the window bounds, because macOS 27 no longer provides `AXCGWindowID`
 
 #### 4. Accessibility Permission Handling (Priority: Critical)
 - Check permission status on launch
@@ -96,16 +120,21 @@ Quit
   - `AppDelegate` - Main application controller
   - `WindowManager` - Handles window focus logic
   - `FocusEventMonitor` - Keyboard / mouse / hide trigger sources
-  - `FocusRecoveryEngine` - Target window discovery and activation
-  - `AccessibilityHelper` - Permission checking and AX utilities
+  - `FocusRecoveryEngine` - Recovery decision: did the target window actually leave the screen?
+  - `WindowOrderService` - Window identity, z-order and Space filtering (public API only)
+  - `ActivationService` - Ordered, verified activation of the next app
+  - `AXGeometry` - Shared AX attribute / frame helpers
+  - `AccessibilityHelper` - Permission checking and settings deep links
 
 ### Edge Cases & Error Handling
-1. **No accessibility permission**: Show alert, open System Preferences
+1. **No accessibility permission**: Logged on startup and before every check; the app prompts on launch and opens System Settings if declined
 2. **Target window still visible (tab close / blank window)**: Skip recovery immediately
 3. **No valid windows to focus**: Do nothing
 4. **Background AX noise**: Destroyed/miniaturized notifications from non-frontmost apps are filtered by PID
-5. **Rapid close/minimize events**: 0.2s debounce prevents rapid switching
-6. **Slow window teardown**: If the window is still on screen at the 50ms check, the trigger is abandoned and macOS handles focus itself
+5. **Rapid close/minimize events**: 0.2s debounce on both the keyboard and AX-notification paths, plus a supersede token so a newer trigger cancels an in-flight re-check
+6. **Slow window teardown**: the re-check gives the close animation up to 800ms to finish; if the window is still there the trigger is abandoned
+7. **Finder desktop churn**: Finder destroys and recreates its desktop element during Quick Look and desktop interactions; these are suppressed when Finder has no standard window
+8. **Activation refused**: Each activation step is verified against the frontmost app and logged, so a refusal is visible instead of silent
 
 ## 4. Technical Specification
 
@@ -113,11 +142,17 @@ Quit
 - **None** - Pure Apple frameworks only
 
 ### Frameworks Used
-- `AppKit` - UI and menu bar
-- `ApplicationServices` - AXUIElement APIs
+- `AppKit` - UI, menu bar, `NSWindow.windowNumbers`, `NSRunningApplication`
+- `ApplicationServices` - AXUIElement / AXObserver APIs
 - `CoreGraphics` - CGWindowList / CGWindow APIs
+- `IOKit` - `IOHIDCheckAccess` for Input Monitoring status
 - `ServiceManagement` - SMAppService for launch at login
-- `Cocoa` - Foundation and AppKit
+
+### Private API Policy
+- **None.** v5.0.0 uses only public API. Earlier versions called the private symbols `CGSSpaceCopyCurrent` and `CGSCopySpacesForWindow` (removed in macOS 27) and the private AX attribute `AXCGWindowID` (removed in macOS 27).
+
+### Signing
+- A stable local signing identity (`Focus TrafficLight Local Signing`) is used instead of ad-hoc signing. TCC binds the Accessibility grant to the designated requirement, which for ad-hoc signing is the binary hash — so every rebuild invalidated the grant. With a certificate-rooted requirement the grant survives rebuilds.
 
 ### Required Info.plist Keys
 ```xml
@@ -148,6 +183,9 @@ FocusTrafficLight/
 │   ├── WindowManager.swift
 │   ├── FocusEventMonitor.swift
 │   ├── FocusRecoveryEngine.swift
+│   ├── WindowOrderService.swift
+│   ├── ActivationService.swift
+│   ├── AXGeometry.swift
 │   ├── AppLogger.swift
 │   └── AccessibilityHelper.swift
 ├── Resources/
@@ -156,6 +194,15 @@ FocusTrafficLight/
 ```
 
 ## 5. Version History
+
+### v5.0.0 - macOS 27 Support (2026-09-17)
+- Private `AXCGWindowID` attribute is gone on macOS 27, leaving the target window unknown and the "did it disappear" check permanently short-circuited; window identity now comes from `NSWindow.windowNumbers` plus geometric bounds matching
+- Private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow` symbols are gone on macOS 27, so Space filtering had silently degraded; it now comes from the public active-Space z-order list
+- Finder desktop / Quick Look suppression no longer reads `kCGWindowName` (empty without Screen Recording); it checks whether Finder still has a standard window, and the AX path gained the debounce it was missing
+- Activation no longer uses the no-op `activateIgnoringOtherApps` flag; it runs an ordered, verified strategy and logs the result
+- Key pipeline logs moved to `notice` so they persist and are visible to `log show`
+- Signed with a stable local certificate so the Accessibility grant survives rebuilds
+- Minimum system version raised to macOS 27.0
 
 ### v4.0.4 - Hidden Notification Validation (2026-09-01)
 - `kAXApplicationHiddenNotification` is only honored when the app is actually hidden
