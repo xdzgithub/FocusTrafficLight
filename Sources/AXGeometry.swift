@@ -25,6 +25,17 @@ enum AXGeometry {
         return value as! AXUIElement?
     }
 
+    /// Whether the element is a minimized window.
+    ///
+    /// Minimizing does *not* remove a window from the app's accessibility window
+    /// list — it stays there with this flag set (measured: flag flips at ~109ms
+    /// while the window only leaves the on-screen list at ~659ms). Closing, by
+    /// contrast, removes it from the list. The two dismissal kinds therefore need
+    /// different signals.
+    static func isMinimized(_ element: AXUIElement) -> Bool {
+        (attribute(of: element, key: kAXMinimizedAttribute as CFString) as? Bool) ?? false
+    }
+
     /// The element's frame in global screen coordinates, which is the same
     /// coordinate space `CGWindowListCopyWindowInfo` reports bounds in.
     static func frame(of element: AXUIElement) -> CGRect? {
