@@ -14,7 +14,8 @@ macOS 菜单栏应用，自动管理窗口焦点恢复。
 
 ## 系统要求
 
-- macOS 27 及以上
+- **macOS 27 及以上**：使用本版本（v5.x）
+- **macOS 15 及更早**：请使用 **V4 版本** — [v4.0.6](https://github.com/xdzgithub/FocusTrafficLight/releases/tag/v4.0.6)
 - 需要辅助功能权限
 
 ## 安装

@@ -14,7 +14,8 @@ A macOS menu bar app that automatically manages window focus recovery.
 
 ## Requirements
 
-- macOS 27 or later
+- **macOS 27 or later**: use this version (v5.x)
+- **macOS 15 or earlier**: use the **V4 release** — [v4.0.6](https://github.com/xdzgithub/FocusTrafficLight/releases/tag/v4.0.6)
 - Accessibility permission required
 
 ## Installation
