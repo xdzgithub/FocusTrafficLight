@@ -37,12 +37,21 @@ final class FocusRecoveryEngine {
     private let windowOrder: WindowOrderService
     private let activation: ActivationService
 
-    private let checkInterval: TimeInterval = 0.025
+    private let checkInterval: TimeInterval = 0.015
 
-    /// How long a dismissal may take before the trigger is abandoned as a
-    /// non-dismissal. Sized to outlast the longer of the two animations (~660ms
-    /// for a minimize, ~569ms for a close).
-    private let dismissalTimeout: TimeInterval = 0.8
+    /// How long a close or hide may take before the trigger is abandoned as a
+    /// non-dismissal.
+    ///
+    /// A real close shows up in the accessibility window list between roughly
+    /// 140ms (Finder, System Settings) and 225ms (Chrome), so this bound catches
+    /// it while a window that is genuinely staying — a browser tab closing, a
+    /// menu dismissing — stops waiting quickly instead of hanging for a second.
+    private let dismissalTimeout: TimeInterval = 0.35
+
+    /// A minimize runs a genie animation and the window stays on screen for the
+    /// whole of it, leaving only at ~660ms. Focusing earlier would steal focus
+    /// mid-animation, so a minimize is allowed that long.
+    private let minimizeTimeout: TimeInterval = 0.8
 
     /// Increments on every trigger so a newer trigger supersedes an in-flight
     /// re-check instead of racing it.
@@ -51,8 +60,8 @@ final class FocusRecoveryEngine {
     /// Consecutive polls that agreed the dismissal happened.
     ///
     /// A single read can transiently miss a window, which would move focus while
-    /// it is still on screen. Requiring two agreeing polls costs one interval
-    /// (25ms) and removes that failure mode.
+    /// it is still on screen. Confirming on the next interval costs 15ms and
+    /// removes that failure mode.
     private var absentPolls = 0
     private let requiredAbsentPolls = 2
 
@@ -170,7 +179,8 @@ final class FocusRecoveryEngine {
 
         if let reason {
             absentPolls = 0
-            guard waited < dismissalTimeout else {
+            let bound = pending.isMinimize ? minimizeTimeout : dismissalTimeout
+            guard waited < bound else {
                 AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
                 return
             }
