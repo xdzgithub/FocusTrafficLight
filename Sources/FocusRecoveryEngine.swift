@@ -103,9 +103,23 @@ final class FocusRecoveryEngine {
 
         // Which display the user is working on. Captured now, while the triggered
         // window is still on screen, because it is gone by the time focus moves.
-        let triggeredDisplay = context.targetWindowID.flatMap { snapshot.info(forWindowID: $0)?.displayID }
+        //
+        // An app-hide trigger carries no window ID, so the source app's own
+        // frontmost window is used instead: it is still on screen at this point
+        // (a hide takes ~400ms while the notification arrives at ~130ms). Without
+        // this the display would be unknown, recovery would fall back to the
+        // global z-order, and closing a window on one screen could hand focus to
+        // a window on another.
+        let triggeredDisplay: CGDirectDisplayID? = {
+            if let windowID = context.targetWindowID, let display = snapshot.info(forWindowID: windowID)?.displayID {
+                return display
+            }
+            return snapshot.topmostWindow(ownerPID: context.sourcePID)?.displayID
+        }()
         if let triggeredDisplay {
             AppLogger.notice("Triggered window is on display \(triggeredDisplay)")
+        } else {
+            AppLogger.notice("Triggered window's display unknown, falling back to global z-order")
         }
 
         // Closing or minimizing one of several windows leaves the app with a
