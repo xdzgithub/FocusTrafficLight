@@ -63,6 +63,7 @@ Quit
 
 #### 3. Focus Logic (Priority: Critical)
 - **Trigger**: Explicit close, minimize, or app hide — always a user action
+- **Timing**: a close or minimize starts checking immediately; an app hide waits 75ms first, because its decision reads the app's accessibility window count and the hide notification can arrive before that count has settled
 - **Verify, then focus**: recovery waits for evidence that the acted-on window actually went away. This is required: without it, closing a browser tab (the window is still there) would steal focus, and a minimize would move focus mid-animation
 - **Why the evidence is never instant**: the window stays on screen until its animation ends — measured on macOS 27 at ~140ms for a Finder close, ~225ms for Chrome, ~660ms for a minimize. The wait is at the signal's own speed, not the bound's: a 15ms poll interval means focus moves within one interval of the signal
 - **The bound only bounds non-dismissals**: a closing tab never produces the signal, so it waits out the 1.0s bound and is then skipped. Since no focus change was going to happen, that wait is invisible. Sizing the bound generously therefore costs nothing in perceived speed

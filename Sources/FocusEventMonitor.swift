@@ -58,9 +58,18 @@ final class FocusEventMonitor {
     private var observers: [pid_t: (observer: AXObserver, runLoopSource: CFRunLoopSource, retainedSelf: UnsafeMutableRawPointer)] = [:]
     private var lastCmdHAt: TimeInterval = 0
 
-    /// Recovery starts polling immediately: the first poll simply reports the
-    /// window as still present, so a settle delay here would only add latency.
-    private let settleDelay: TimeInterval = 0
+    /// Delay before the recovery check starts, per trigger kind.
+    ///
+    /// A close/minimize starts polling immediately: the first poll just reports
+    /// the window as still present, so a delay there would only add latency.
+    ///
+    /// An app hide waits briefly instead. Its decision is read from the app's
+    /// accessibility window count, and the hide notification can arrive before
+    /// that count has settled, so a short margin avoids reading it mid-update.
+    private func settleDelay(for kind: FocusTriggerContext.Kind) -> TimeInterval {
+        kind == .windowHidden ? 0.075 : 0
+    }
+
     private let debounceInterval: TimeInterval = 0.2
     private var lastTriggerAt: TimeInterval = 0
 
@@ -349,7 +358,8 @@ final class FocusEventMonitor {
             "Focus trigger queued: \(context.kind.rawValue) PID=\(context.sourcePID) window=\(context.targetWindowID.map(String.init) ?? "?")"
         )
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + settleDelay) { [weak self] in
+        let delay = settleDelay(for: context.kind)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.onFocusCheckNeeded?(context)
         }
     }
