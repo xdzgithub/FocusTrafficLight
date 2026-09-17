@@ -400,9 +400,15 @@ final class FocusEventMonitor {
         let retainedSelf = Unmanaged.passRetained(self).toOpaque()
         let appElement = AXUIElementCreateApplication(pid)
 
+        // A minimize is deliberately not observed here. It is already covered by
+        // the Cmd+M key trigger and the yellow-button click trigger, and the
+        // notification is unreliable as a trigger: the element it carries belongs
+        // to a window whose identity can no longer be read (AXCGWindowID is gone),
+        // so it matched an unrelated window and the check then waited for that
+        // window to disappear — which never happened, ending in a skipped
+        // recovery.
         let notifications: [CFString] = [
             kAXUIElementDestroyedNotification as CFString,
-            kAXWindowMiniaturizedNotification as CFString,
             kAXApplicationHiddenNotification as CFString
         ]
 
@@ -440,7 +446,6 @@ final class FocusEventMonitor {
 
     private func handleAXNotification(element: AXUIElement, name: String) {
         guard name == kAXUIElementDestroyedNotification as String ||
-              name == kAXWindowMiniaturizedNotification as String ||
               name == kAXApplicationHiddenNotification as String else {
             return
         }

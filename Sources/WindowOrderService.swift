@@ -210,6 +210,34 @@ final class WindowOrderService {
         return list.contains { ($0[kCGWindowNumber as String] as? Int) == windowID }
     }
 
+    /// Whether the window at `bounds` in `pid` is flagged minimized, or nil when
+    /// that cannot be determined.
+    ///
+    /// This is the earliest reliable minimise signal: the flag flips at ~120–360ms
+    /// (measured on Finder), while the window does not leave the on-screen list
+    /// until ~725–940ms — and that gap is long enough to overrun a timeout on a
+    /// slow minimise, which is what made focus recovery intermittent.
+    func windowIsMinimized(ownerPID pid: pid_t, matching bounds: CGRect, tolerance: CGFloat = 2) -> Bool? {
+        guard let windows = accessibilityWindows(ownerPID: pid) else { return nil }
+        for window in windows {
+            guard let frame = AXGeometry.frame(of: window) else { continue }
+            guard abs(frame.minX - bounds.minX) <= tolerance, abs(frame.minY - bounds.minY) <= tolerance,
+                  abs(frame.width - bounds.width) <= tolerance, abs(frame.height - bounds.height) <= tolerance else {
+                continue
+            }
+            return AXGeometry.isMinimized(window)
+        }
+        return nil
+    }
+
+    /// Whether any window of `pid` is flagged minimized, or nil when that cannot be
+    /// determined. Used when the acted-on window is unknown (a keyboard minimise
+    /// whose window ID could not be resolved).
+    func anyWindowIsMinimized(ownerPID pid: pid_t) -> Bool? {
+        guard let windows = accessibilityWindows(ownerPID: pid) else { return nil }
+        return windows.contains { AXGeometry.isMinimized($0) }
+    }
+
     func visibleLayer0WindowCount(ownerPID pid: pid_t) -> Int {
         let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],

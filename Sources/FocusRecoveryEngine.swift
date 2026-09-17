@@ -45,11 +45,13 @@ final class FocusRecoveryEngine {
 
     private let checkInterval: TimeInterval = 0.015
 
-    /// Upper bound on the wait. Sized to comfortably exceed the slowest dismissal
-    /// (a minimize animation at ~660ms) rather than to be tight: a genuine
-    /// dismissal is detected as soon as its signal arrives, so this only decides
-    /// how long a non-dismissal is polled before being dropped.
-    private let dismissalTimeout: TimeInterval = 1.0
+    /// Upper bound on the wait. Sized to comfortably exceed the slowest signal a
+    /// dismissal can produce, rather than to be tight: a genuine dismissal is
+    /// detected as soon as its signal arrives, so this only decides how long a
+    /// non-dismissal is polled before being dropped. Measured worst cases: a
+    /// minimize flag flips by ~360ms and a close's accessibility entry clears by
+    /// ~225ms, both well inside this.
+    private let dismissalTimeout: TimeInterval = 1.2
 
     /// Increments on every trigger so a newer trigger supersedes an in-flight
     /// re-check instead of racing it.
@@ -79,14 +81,16 @@ final class FocusRecoveryEngine {
         /// hide path (see `dismissalOutcome`).
         let initialWindowCount: Int?
 
-        /// A minimize keeps its accessibility entry for the whole animation, so it
-        /// is decided from the on-screen list alone (see `dismissalOutcome`).
+        // A minimize keeps its accessibility entry for the whole animation, so it
+        // is decided from the minimized flag (see `dismissalOutcome`).
         var isMinimize: Bool {
             kind == .minimizeWindow || kind == .minimizeButton
         }
 
-        /// An app-hide trigger carries no window ID, so it is decided from the
-        /// app's window count instead.
+        /// Only a genuine app-hide notification is decided from the app's window
+        /// count. A minimize whose window ID could not be resolved must not fall
+        /// through to it: minimizing does not change the count, so it would always
+        /// time out and skip recovery.
         var isAppHide: Bool {
             kind == .windowHidden
         }
@@ -214,20 +218,16 @@ final class FocusRecoveryEngine {
     ///
     /// Kept cheap: this runs in a poll loop, so it does one narrow query per call.
     private func dismissalOutcome(_ pending: Pending) -> DismissalOutcome {
+        // Each kind is decided from the signal that actually reports it. They are
+        // not interchangeable: a minimize leaves the app's window count unchanged,
+        // and a hide keeps the window's own identity unavailable.
+        if pending.isMinimize {
+            return minimizeOutcome(pending)
+        }
+
         let windowID = pending.windowID ?? 0
         guard windowID > 0 else {
             return appHideOutcome(pending)
-        }
-
-        // A minimize keeps its accessibility entry (marked minimized) for the whole
-        // genie animation and only leaves the on-screen list at ~660ms — which is
-        // also when the animation finishes, so waiting for that is what keeps focus
-        // from being stolen mid-animation. The on-screen check is used exclusively:
-        // during the animation the app's accessibility server stops answering.
-        if pending.isMinimize {
-            return windowOrder.isWindowOnScreen(windowID: windowID)
-                ? .pending(reason: "window \(windowID) to minimize")
-                : .dismissed
         }
 
         // A close removes the window from the app's accessibility window list at
@@ -255,6 +255,37 @@ final class FocusRecoveryEngine {
             : .dismissed
     }
 
+    /// Decides a minimize from the accessibility minimized flag.
+    ///
+    /// This is the earliest reliable signal: the flag flips at ~120–360ms
+    /// (measured on Finder), whereas the window does not leave the on-screen list
+    /// until ~725–940ms. Waiting for the on-screen list made recovery intermittent,
+    /// because a slow minimize could overrun the timeout and the trigger was then
+    /// dropped.
+    private func minimizeOutcome(_ pending: Pending) -> DismissalOutcome {
+        // The window is known: read its own flag.
+        if let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0,
+           let minimized = windowOrder.windowIsMinimized(ownerPID: pending.sourcePID, matching: bounds) {
+            return minimized ? .dismissed : .pending(reason: "window to be minimized")
+        }
+
+        // The window is unknown (a keyboard minimize whose window ID could not be
+        // resolved), so fall back to any minimized window of that app. The later
+        // on-screen check is deliberately not used here — that is the slow signal
+        // this path exists to avoid.
+        if let anyMinimized = windowOrder.anyWindowIsMinimized(ownerPID: pending.sourcePID) {
+            return anyMinimized ? .dismissed : .pending(reason: "PID \(pending.sourcePID) to minimize a window")
+        }
+
+        // The flag could not be read at all; the on-screen list is all that is left.
+        if let windowID = pending.windowID, windowID > 0 {
+            return windowOrder.isWindowOnScreen(windowID: windowID)
+                ? .pending(reason: "window \(windowID) to minimize")
+                : .dismissed
+        }
+        return .pending(reason: "PID \(pending.sourcePID) to minimize a window")
+    }
+
     /// Decides an app-hide trigger from the app's window count alone.
     ///
     /// This deliberately ignores the on-screen list, which only clears once the
@@ -269,6 +300,16 @@ final class FocusRecoveryEngine {
     /// never be mistaken for a window going away.
     private func appHideOutcome(_ pending: Pending) -> DismissalOutcome {
         let pid = pending.sourcePID
+
+        guard pending.isAppHide else {
+            // A close whose window ID is unknown. The accessibility window list is
+            // the early signal here too: a closed window leaves it well before it
+            // leaves the on-screen list.
+            if let windows = windowOrder.accessibilityWindows(ownerPID: pid), windows.isEmpty {
+                return .dismissed
+            }
+            return .pending(reason: "PID \(pid) to lose its window")
+        }
 
         guard let current = windowOrder.accessibilityWindows(ownerPID: pid)?.count else {
             // The app's window list cannot be read; fall back to the slower
