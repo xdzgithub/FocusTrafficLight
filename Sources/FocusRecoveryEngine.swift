@@ -39,24 +39,20 @@ final class FocusRecoveryEngine {
 
     private let checkInterval: TimeInterval = 0.025
 
-    /// How long a strict dismissal (close / hide) may take before the trigger is
-    /// abandoned as a non-dismissal.
-    private let strictTimeout: TimeInterval = 0.8
-
-    /// How long a minimize waits for the window to disappear from the on-screen
-    /// list before the explicit action is trusted regardless.
-    private let trustTimeout: TimeInterval = 0.1
+    /// How long a dismissal may take before the trigger is abandoned as a
+    /// non-dismissal. Sized to outlast the longer of the two animations (~660ms
+    /// for a minimize, ~569ms for a close).
+    private let dismissalTimeout: TimeInterval = 0.8
 
     /// Increments on every trigger so a newer trigger supersedes an in-flight
     /// re-check instead of racing it.
     private var currentCheckToken = 0
 
-    /// Consecutive polls that agreed a strict dismissal happened.
+    /// Consecutive polls that agreed the dismissal happened.
     ///
-    /// The accessibility window list is the earliest signal for a close, but a
-    /// single read can transiently miss a window, which would move focus while it
-    /// is still on screen. Requiring two agreeing polls costs one interval (25ms)
-    /// and removes that failure mode. A trusted minimize needs no confirmation.
+    /// A single read can transiently miss a window, which would move focus while
+    /// it is still on screen. Requiring two agreeing polls costs one interval
+    /// (25ms) and removes that failure mode.
     private var absentPolls = 0
     private let requiredAbsentPolls = 2
 
@@ -69,8 +65,10 @@ final class FocusRecoveryEngine {
         /// source app's accessibility list.
         let windowBounds: CGRect?
 
-        /// A minimize is trusted; a close/hide must be confirmed.
-        var isTrustedAction: Bool {
+        /// A minimize moves the window off screen through its genie animation and
+        /// keeps its accessibility entry the whole time, so it is decided from the
+        /// on-screen list alone (see `dismissalPendingReason`).
+        var isMinimize: Bool {
             kind == .minimizeWindow || kind == .minimizeButton
         }
     }
@@ -128,25 +126,16 @@ final class FocusRecoveryEngine {
         }
 
         let reason = dismissalPendingReason(pending)
-        let deadline = pending.isTrustedAction ? trustTimeout : strictTimeout
 
         if let reason {
             absentPolls = 0
-            if waited >= deadline {
-                if pending.isTrustedAction {
-                    AppLogger.notice(
-                        "Minimize not confirmed after \(Int(waited * 1000))ms (\(reason)), trusting the explicit action"
-                    )
-                    focusNextWindow(sourcePID: pending.sourcePID)
-                } else {
-                    AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
-                }
+            guard waited < dismissalTimeout else {
+                AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
                 return
             }
         } else {
             absentPolls += 1
-            let confirmed = pending.isTrustedAction || absentPolls >= requiredAbsentPolls
-            if confirmed {
+            if absentPolls >= requiredAbsentPolls {
                 focusNextWindow(sourcePID: pending.sourcePID)
                 return
             }
@@ -160,9 +149,7 @@ final class FocusRecoveryEngine {
 
     /// Returns what we are still waiting for, or nil once the window is dismissed.
     ///
-    /// Intentionally cheap: this runs in a 25ms poll loop, and the expensive
-    /// accessibility read is avoided entirely for a minimize because it blocks
-    /// during the minimize animation (see the type comment).
+    /// Intentionally cheap: this runs in a 25ms poll loop.
     private func dismissalPendingReason(_ pending: Pending) -> String? {
         guard let windowID = pending.windowID, windowID > 0 else {
             // An app-hide trigger carries no window ID: the accessibility element
@@ -179,8 +166,13 @@ final class FocusRecoveryEngine {
                 : "PID \(pending.sourcePID) to lose its windows"
         }
 
-        if pending.isTrustedAction {
-            // Only the cheap on-screen check; never the blocking accessibility read.
+        // A minimize keeps its accessibility entry (marked minimized) and stays in
+        // the on-screen list for the whole genie animation, leaving it only at
+        // ~659ms — which is also when the animation finishes, so focusing then
+        // cannot jump ahead of it. The on-screen check is used exclusively here:
+        // during the animation the app's accessibility server stops answering, so
+        // a window list read would block for ~515ms.
+        if pending.isMinimize {
             return windowOrder.isWindowOnScreen(windowID: windowID) ? "window \(windowID) to minimize" : nil
         }
 
@@ -188,8 +180,7 @@ final class FocusRecoveryEngine {
         // once, long before it leaves the on-screen list, so that list decides
         // when it can be read. A frame that fails to read is not evidence of
         // absence, so the slower on-screen list takes over if nothing could be
-        // read. Matching a minimized window also counts as dismissed: minimizes
-        // keep their entry in that list.
+        // read. A matching window that is minimized also counts as dismissed.
         if let windows = windowOrder.accessibilityWindows(ownerPID: pending.sourcePID),
            let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0 {
             var readableFrames = 0

@@ -66,14 +66,14 @@ Quit
 - **Instant skip**: when the trigger is a close/minimize and the source app still has two or more visible windows, focus does not need to move at all — decided immediately, with no waiting
 - **Otherwise**: wait for the triggered window to disappear, polling every 25ms up to an 800ms bound
 - **Why waiting is required**: the window-out signal always trails the user action. Measured on macOS 27 (Finder close): the accessibility window list drops the window at ~281ms, while it stays composited on screen until ~569ms (alpha begins fading at ~339ms). An app hide is faster: the accessibility destroy notification arrives at ~130ms and the window leaves the screen at ~400ms. v4.x sampled once at 50ms, so it always concluded "still there" and skipped every recovery
-- **Which signal decides**: the accessibility window list, because it reflects the close/hide about twice as early; the on-screen list takes over when no frame could be read (a frame that fails to read is never treated as absence)
-- **What is waited on**:
-  - a specific window ID, when the trigger resolved one (keyboard, traffic-light click)
-  - otherwise, for an app-hide trigger, whether the source app still owns a visible window (the accessibility element is already destroyed when the notification arrives, so its frame — and therefore its window ID — can no longer be read). Both the accessibility list and the on-screen list must clear, so the engine neither fires while a window is still visible nor concludes "still there" when only the slower list has caught up
-- **Confirmation**: two consecutive agreeing polls are required, so a single transient accessibility read cannot move focus while the window is still on screen
+- **Which signal decides**: it depends on how the window was dismissed, because macOS reports the three kinds differently:
+  - **close** — the window leaves the app's accessibility window list at ~281ms, well before it leaves the on-screen list, so that list decides (the on-screen list takes over when no frame could be read; a frame that fails to read is never treated as absence)
+  - **minimize** — the window *keeps* its accessibility entry (marked minimized) for the whole genie animation, so the accessibility list can never report it gone; the on-screen list decides instead, and the window only leaves it at ~659ms when the animation ends. The accessibility read is also deliberately avoided here: during a minimize animation the app's accessibility server stops answering and that read blocks for ~515ms. Focusing before the window leaves the screen would steal focus mid-animation
+  - **hide** — no window ID is available (the element is destroyed before the notification), so the engine waits for the app to lose its windows, requiring both the accessibility list and the on-screen list to clear
+- **Confirmation**: two consecutive agreeing polls are required, so a single transient read cannot move focus while the window is still on screen
 - **Skip**: If the window, or the hidden app's windows, are still visible when the bound elapses (browser tab close, menu dismissal, an app that keeps other windows), recovery is skipped
 - **Supersede**: a newer trigger invalidates an in-flight re-check via a token, so rapid close/minimize/hide sequences cannot race
-- **Measured end-to-end** (decision to accepted activation, macOS 27): Cmd+W ~50ms, app hide ~280ms — the latter close to the ~281ms signal floor
+- **Measured end-to-end** (decision to accepted activation, macOS 27): Cmd+W ~50ms, app hide ~280ms (close to the ~281ms signal floor), minimize ~540ms — bounded by the genie animation, which cannot be short-circuited without stealing focus mid-animation
 - **Selection Algorithm**:
   1. Get all windows visible on the active Space in front-to-back z-order
   2. Filter: `layer 0`, owner is neither this process nor the source app (the source app's window may briefly outlive it, and the point is to move focus away from it)
