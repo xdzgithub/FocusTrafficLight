@@ -74,10 +74,13 @@ Quit
 - **Skip**: If the window, or the hidden app's windows, are still visible when the bound elapses (browser tab close, menu dismissal, an app that keeps other windows), recovery is skipped
 - **Supersede**: a newer trigger invalidates an in-flight re-check via a token, so rapid close/minimize/hide sequences cannot race
 - **Measured end-to-end** (decision to accepted activation, macOS 27): Cmd+W ~50ms, app hide ~280ms (close to the ~281ms signal floor), minimize ~540ms — bounded by the genie animation, which cannot be short-circuited without stealing focus mid-animation
+- **Instant skip is display-scoped**: when the trigger is a close/minimize, the "app still has another window" test looks only at the display the triggered window was on, so closing the last window on one screen still hands focus on even if the app keeps a window on another screen
 - **Selection Algorithm**:
   1. Get all windows visible on the active Space in front-to-back z-order
   2. Filter: `layer 0`, owner is neither this process nor the source app (the source app's window may briefly outlive it, and the point is to move focus away from it)
-  3. Focus via the activation strategy below
+  3. Prefer a window on the display the triggered window was on (falls back to the whole Space when that display has none), then focus via the activation strategy below
+- **Display scoping**: a Space is not a display. Where "Displays have separate Spaces" is off (the default) one Space spans every screen, so the active-Space list mixes displays and the globally-topmost window may be on a screen the user is not looking at. The snapshot records each window's display so recovery can prefer the right screen
+- **Cross-display side effect**: activating an app raises all of its windows on every display — native behaviour, not caused by this app's options (verified by real-clicking a dual-display app). Recovery captures the frontmost window per display beforehand and raises back any display it was not asked to change, once activation has settled
 - No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
 - No background polling: the re-check runs only in response to a trigger and always terminates
 

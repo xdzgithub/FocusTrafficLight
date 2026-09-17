@@ -19,6 +19,17 @@ import CoreGraphics
 ///
 /// Every query is answered from a single `Snapshot`, so one recovery check never
 /// sees two different moments in time.
+///
+/// # Displays
+///
+/// A Space is not the same thing as a display. On a Mac where "Displays have
+/// separate Spaces" is *off* — the default — one Space spans every display, so
+/// the active-Space list above mixes windows from all of them and the frontmost
+/// window can easily be on a different screen from the one the user just closed
+/// a window on. The snapshot therefore also records which display each window is
+/// on, letting recovery prefer a window on the same display as the one that went
+/// away without giving up the Space guarantee (that display is inside the active
+/// Space by construction).
 final class WindowOrderService {
 
     struct WindowInfo {
@@ -26,6 +37,9 @@ final class WindowOrderService {
         let ownerPID: pid_t
         let layer: Int
         let bounds: CGRect
+        /// The display the window's centre falls on, or nil when it falls outside
+        /// every active display.
+        let displayID: CGDirectDisplayID?
     }
 
     /// One coherent look at the window server.
@@ -88,16 +102,46 @@ final class WindowOrderService {
         }
 
         /// The frontmost normal window owned by anyone outside `excluded`.
-        func topmostWindow(excluding excluded: Set<pid_t>) -> WindowInfo? {
-            ordered.lazy
+        ///
+        /// When `onDisplay` is given, a window on that display is preferred; if
+        /// that display has no candidate the whole active Space is used, so
+        /// recovery never ends with nothing to focus.
+        func topmostWindow(excluding excluded: Set<pid_t>, preferringDisplay onDisplay: CGDirectDisplayID? = nil) -> WindowInfo? {
+            let candidates = ordered.lazy
                 .compactMap { infoByID[$0] }
-                .first { !excluded.contains($0.ownerPID) && $0.layer == 0 }
+                .filter { !excluded.contains($0.ownerPID) && $0.layer == 0 }
+            if let onDisplay, let preferred = candidates.first(where: { $0.displayID == onDisplay }) {
+                return preferred
+            }
+            return candidates.first
+        }
+
+        /// The frontmost normal window on each display.
+        ///
+        /// Used to undo a side effect of activation: bringing an app to the front
+        /// raises *all* of its windows on *every* display (verified to be native
+        /// behaviour, not something this app does), so the app's window on a
+        /// display the user is not looking at can jump above whatever was there.
+        /// Capturing the previous frontmost window per display lets recovery put
+        /// those displays back afterwards.
+        func topmostWindowPerDisplay(excluding excluded: Set<pid_t>) -> [CGDirectDisplayID: WindowInfo] {
+            var result: [CGDirectDisplayID: WindowInfo] = [:]
+            for windowID in ordered {
+                guard let info = infoByID[windowID], info.layer == 0,
+                      !excluded.contains(info.ownerPID),
+                      let display = info.displayID, result[display] == nil else {
+                    continue
+                }
+                result[display] = info
+            }
+            return result
         }
     }
 
     func takeSnapshot() -> Snapshot {
         var infoByID: [Int: WindowInfo] = [:]
         var cgOrder: [Int] = []
+        let displays = Self.activeDisplayBounds()
 
         let cgList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
@@ -114,11 +158,13 @@ final class WindowOrderService {
                let rect = CGRect(dictionaryRepresentation: dict as CFDictionary) {
                 bounds = rect
             }
+            let displayID = displays.first { $0.bounds.contains(CGPoint(x: bounds.midX, y: bounds.midY)) }?.id
             infoByID[windowID] = WindowInfo(
                 windowID: windowID,
                 ownerPID: ownerPID,
                 layer: entry[kCGWindowLayer as String] as? Int ?? 0,
-                bounds: bounds
+                bounds: bounds,
+                displayID: displayID
             )
             cgOrder.append(windowID)
         }
@@ -177,6 +223,52 @@ final class WindowOrderService {
         }
     }
 
+    /// Whether `pid` has a normal window on `displayID` other than `excluding`.
+    ///
+    /// Used to decide whether dismissing a window leaves the app something to show
+    /// on the display the user is working on. `excluding` matters because the
+    /// dismissed window is still on screen when this is asked, so counting it
+    /// would always answer yes.
+    func hasOtherVisibleLayer0Window(
+        ownerPID pid: pid_t,
+        onDisplay displayID: CGDirectDisplayID,
+        excluding windowID: Int
+    ) -> Bool {
+        let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+        guard let display = Self.activeDisplayBounds().first(where: { $0.id == displayID })?.bounds else {
+            return visibleLayer0WindowCount(ownerPID: pid) >= 2
+        }
+
+        return list.contains { entry in
+            guard let id = entry[kCGWindowNumber as String] as? Int, id != windowID,
+                  (entry[kCGWindowOwnerPID as String] as? pid_t) == pid,
+                  (entry[kCGWindowLayer as String] as? Int) == 0,
+                  let dict = entry[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: dict as CFDictionary) else {
+                return false
+            }
+            return display.contains(CGPoint(x: rect.midX, y: rect.midY))
+        }
+    }
+
+    /// The display a window currently sits on, or nil when it is not on screen.
+    func displayID(ofWindowID windowID: Int) -> CGDirectDisplayID? {
+        let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+        guard let entry = list.first(where: { ($0[kCGWindowNumber as String] as? Int) == windowID }),
+              let dict = entry[kCGWindowBounds as String] as? [String: Any],
+              let rect = CGRect(dictionaryRepresentation: dict as CFDictionary) else {
+            return nil
+        }
+        let centre = CGPoint(x: rect.midX, y: rect.midY)
+        return Self.activeDisplayBounds().first { $0.bounds.contains(centre) }?.id
+    }
+
     /// Whether the app's accessibility window list still contains a window at
     /// `bounds`, or nil when that list cannot be read.
     ///
@@ -207,5 +299,17 @@ final class WindowOrderService {
             return nil
         }
         return value as? [AXUIElement]
+    }
+
+    // MARK: - Displays
+
+    /// Active displays with their bounds in the same global coordinate space as
+    /// window bounds, so a window's display can be found by containment.
+    static func activeDisplayBounds() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return [] }
+        return displays.prefix(Int(count)).map { ($0, CGDisplayBounds($0)) }
     }
 }

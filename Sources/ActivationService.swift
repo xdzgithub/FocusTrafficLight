@@ -15,6 +15,12 @@ import ApplicationServices
 /// refusal shows up in the log instead of passing silently.
 final class ActivationService {
 
+    private let windowOrder: WindowOrderService
+
+    init(windowOrder: WindowOrderService) {
+        self.windowOrder = windowOrder
+    }
+
     enum Strategy: String {
         /// Raise through the Accessibility API. This is the only mechanism that
         /// lets an accessory process hand focus to another app, and it uses the
@@ -28,11 +34,20 @@ final class ActivationService {
         var displayName: String { rawValue }
     }
 
-    /// - Parameter targetWindow: bounds of the window the caller selected, used
-    ///   to raise that specific window when it can be matched in the target app.
-    func activate(_ app: NSRunningApplication, targetWindow: CGRect?) {
+    /// - Parameters:
+    ///   - targetWindow: bounds of the window the caller selected, used to raise
+    ///     that specific window when it can be matched in the target app.
+    ///   - targetDisplay: the display the user is working on. Activation raises
+    ///     the target app's windows on *every* display, so the other displays are
+    ///     put back the way they were once activation settles.
+    func activate(_ app: NSRunningApplication, targetWindow: CGRect?, targetDisplay: CGDirectDisplayID?) {
         let pid = app.processIdentifier
         let name = app.localizedName ?? "?"
+
+        // Captured before activation: on each display, whatever is currently above
+        // the app being activated. Restoring these afterwards keeps a display the
+        // user is not working on visually unchanged.
+        let displaced = displacedWindows(onOtherThan: targetDisplay, activating: pid)
 
         let attempts: [(Strategy, () -> Bool)] = [
             (.accessibilityFrontmost, { self.raiseThroughAccessibility(pid: pid, targetWindow: targetWindow) }),
@@ -46,15 +61,53 @@ final class ActivationService {
             AppLogger.notice(
                 "Activate \(name) via \(strategy.displayName): accepted=\(accepted) frontmost=\(isFrontmost)"
             )
-            if isFrontmost { return }
+            if isFrontmost { break }
         }
 
-        // Nothing took effect before we could observe it. Activation is
-        // asynchronous, so report the settled result once rather than declaring
-        // failure here.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            let settled = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-            AppLogger.notice("Activate \(name) settled: frontmost=\(settled)")
+        if displaced.isEmpty { return }
+
+        // Restore once activation has settled; raising too early would be undone
+        // by the activation still in flight.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.restore(displaced, name: name)
+        }
+    }
+
+    // MARK: - Keeping Other Displays Undisturbed
+
+    /// Windows that activation would newly cover, keyed by the display they are on.
+    private func displacedWindows(
+        onOtherThan targetDisplay: CGDirectDisplayID?,
+        activating pid: pid_t
+    ) -> [CGDirectDisplayID: WindowOrderService.WindowInfo] {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let snapshot = windowOrder.takeSnapshot()
+        let frontmost = snapshot.topmostWindowPerDisplay(excluding: [myPID])
+
+        return frontmost.filter { display, window in
+            // Only displays the user is not working on.
+            guard display != targetDisplay else { return false }
+            // Nothing to restore where the app was already on top.
+            return window.ownerPID != pid
+        }
+    }
+
+    private func restore(_ windows: [CGDirectDisplayID: WindowOrderService.WindowInfo], name: String) {
+        let snapshot = windowOrder.takeSnapshot()
+        let current = snapshot.topmostWindowPerDisplay(excluding: [])
+        var restored = 0
+
+        for (display, window) in windows {
+            // Leave it alone if it never lost the top spot.
+            guard current[display]?.windowID != window.windowID else { continue }
+            guard let element = windowElement(matching: window.bounds, ofApp: window.ownerPID) else { continue }
+            if AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success {
+                restored += 1
+            }
+        }
+
+        if restored > 0 {
+            AppLogger.notice("Restored \(restored) display(s) not covered by \(name)")
         }
     }
 

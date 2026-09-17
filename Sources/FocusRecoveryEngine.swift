@@ -64,6 +64,12 @@ final class FocusRecoveryEngine {
         /// Bounds captured at trigger time, used to recognise the window in the
         /// source app's accessibility list.
         let windowBounds: CGRect?
+        /// The display the triggered window was on, captured at trigger time
+        /// before it leaves the screen. Recovery prefers a next window on the same
+        /// display, so closing a window on the second screen does not hand focus to
+        /// whatever happens to be frontmost on the first. nil for an app-hide
+        /// trigger, which carries no window.
+        let displayID: CGDirectDisplayID?
 
         /// A minimize moves the window off screen through its genie animation and
         /// keeps its accessibility entry the whole time, so it is decided from the
@@ -76,7 +82,7 @@ final class FocusRecoveryEngine {
     init(accessibilityHelper: AccessibilityHelper) {
         self.accessibilityHelper = accessibilityHelper
         self.windowOrder = WindowOrderService()
-        self.activation = ActivationService()
+        self.activation = ActivationService(windowOrder: WindowOrderService())
     }
 
     func performRecoveryCheck(context: FocusTriggerContext) {
@@ -95,11 +101,31 @@ final class FocusRecoveryEngine {
             )
         }
 
+        // Which display the user is working on. Captured now, while the triggered
+        // window is still on screen, because it is gone by the time focus moves.
+        let triggeredDisplay = context.targetWindowID.flatMap { snapshot.info(forWindowID: $0)?.displayID }
+        if let triggeredDisplay {
+            AppLogger.notice("Triggered window is on display \(triggeredDisplay)")
+        }
+
         // Closing or minimizing one of several windows leaves the app with a
         // window, so focus does not need to move at all. Deciding this now avoids
-        // any wait.
-        if context.kind != .windowHidden,
-           windowOrder.visibleLayer0WindowCount(ownerPID: context.sourcePID) >= 2 {
+        // any wait. The check is scoped to the triggered window's display, so
+        // closing the last window on one screen still hands focus on even when the
+        // app keeps a window on another screen. The triggered window itself is
+        // excluded: it is still on screen at this point.
+        if context.kind != .windowHidden, let myWindow = context.targetWindowID, myWindow > 0 {
+            let stillHasWindowHere = triggeredDisplay.map {
+                windowOrder.hasOtherVisibleLayer0Window(
+                    ownerPID: context.sourcePID, onDisplay: $0, excluding: myWindow
+                )
+            } ?? (windowOrder.visibleLayer0WindowCount(ownerPID: context.sourcePID) >= 2)
+            if stillHasWindowHere {
+                AppLogger.notice("App still has another window on this display, focus stays put")
+                return
+            }
+        } else if context.kind != .windowHidden,
+                  windowOrder.visibleLayer0WindowCount(ownerPID: context.sourcePID) >= 2 {
             AppLogger.notice("App still has another visible window, focus stays put")
             return
         }
@@ -108,7 +134,8 @@ final class FocusRecoveryEngine {
             kind: context.kind,
             sourcePID: context.sourcePID,
             windowID: context.targetWindowID,
-            windowBounds: context.targetWindowID.flatMap { snapshot.bounds(ofWindowID: $0) }
+            windowBounds: context.targetWindowID.flatMap { snapshot.bounds(ofWindowID: $0) },
+            displayID: triggeredDisplay
         )
 
         wait(pending: pending, token: token, waited: 0)
@@ -136,7 +163,7 @@ final class FocusRecoveryEngine {
         } else {
             absentPolls += 1
             if absentPolls >= requiredAbsentPolls {
-                focusNextWindow(sourcePID: pending.sourcePID)
+                focusNextWindow(sourcePID: pending.sourcePID, onDisplay: pending.displayID)
                 return
             }
         }
@@ -199,7 +226,7 @@ final class FocusRecoveryEngine {
         return windowOrder.isWindowOnScreen(windowID: windowID) ? "window \(windowID) to be dismissed" : nil
     }
 
-    private func focusNextWindow(sourcePID: pid_t) {
+    private func focusNextWindow(sourcePID: pid_t, onDisplay displayID: CGDirectDisplayID?) {
         let snapshot = windowOrder.takeSnapshot()
         let myPID = ProcessInfo.processInfo.processIdentifier
 
@@ -208,13 +235,16 @@ final class FocusRecoveryEngine {
         var excluded: Set<pid_t> = [myPID]
         if sourcePID != 0 { excluded.insert(sourcePID) }
 
-        guard let candidate = snapshot.topmostWindow(excluding: excluded),
+        guard let candidate = snapshot.topmostWindow(excluding: excluded, preferringDisplay: displayID),
               let app = NSRunningApplication(processIdentifier: candidate.ownerPID) else {
             AppLogger.notice("No visible app window to focus")
             return
         }
 
-        AppLogger.notice("Focusing: \(app.localizedName ?? "?") window=\(candidate.windowID)")
-        activation.activate(app, targetWindow: candidate.bounds)
+        let onRequestedDisplay = displayID != nil && candidate.displayID == displayID
+        AppLogger.notice(
+            "Focusing: \(app.localizedName ?? "?") window=\(candidate.windowID)\(displayID == nil ? "" : " onDisplay=\(onRequestedDisplay ? "same" : "other")")"
+        )
+        activation.activate(app, targetWindow: candidate.bounds, targetDisplay: candidate.displayID)
     }
 }
