@@ -63,11 +63,11 @@ final class FocusEventMonitor {
     /// A close/minimize starts polling immediately: the first poll just reports
     /// the window as still present, so a delay there would only add latency.
     ///
-    /// An app hide waits briefly instead. Its decision is read from the app's
+    /// An app hide waits 50ms instead. Its decision is read from the app's
     /// accessibility window count, and the hide notification can arrive before
     /// that count has settled, so a short margin avoids reading it mid-update.
     private func settleDelay(for kind: FocusTriggerContext.Kind) -> TimeInterval {
-        kind == .windowHidden ? 0.075 : 0
+        kind == .windowHidden ? 0.05 : 0
     }
 
     private let debounceInterval: TimeInterval = 0.2
