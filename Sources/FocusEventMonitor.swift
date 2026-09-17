@@ -58,9 +58,8 @@ final class FocusEventMonitor {
     private var observers: [pid_t: (observer: AXObserver, runLoopSource: CFRunLoopSource, retainedSelf: UnsafeMutableRawPointer)] = [:]
     private var lastCmdHAt: TimeInterval = 0
 
-    /// The recovery check starts immediately; it polls, so a small delay here
-    /// would only be added to every trigger's latency.
-    private let settleDelay: TimeInterval = 0
+    /// The delay between the user's action and the focus move, matching V4.
+    private let settleDelay: TimeInterval = 0.05
     private let debounceInterval: TimeInterval = 0.2
     private var lastTriggerAt: TimeInterval = 0
 

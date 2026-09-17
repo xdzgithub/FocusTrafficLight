@@ -62,29 +62,18 @@ Quit
 - The AX-notification path applies the same 0.2s debounce as the keyboard path, so a burst of desktop destroy/recreate events collapses into one check
 
 #### 3. Focus Logic (Priority: Critical)
-- **Trigger**: Explicit close, minimize, or app hide
-- **Instant skip**: when the trigger is a close/minimize and the source app still has two or more visible windows, focus does not need to move at all — decided immediately, with no waiting
-- **Otherwise**: wait for the triggered window to disappear, polling every 25ms up to an 800ms bound
-- **Why waiting is required**: the window-out signal always trails the user action. Measured on macOS 27 (Finder close): the accessibility window list drops the window at ~281ms, while it stays composited on screen until ~569ms (alpha begins fading at ~339ms). An app hide is faster: the accessibility destroy notification arrives at ~130ms and the window leaves the screen at ~400ms. v4.x sampled once at 50ms, so it always concluded "still there" and skipped every recovery
-- **Which signal decides**: it depends on how the window was dismissed, because macOS reports the three kinds differently:
-  - **close** — the window leaves the app's accessibility window list at ~281ms, well before it leaves the on-screen list, so that list decides (the on-screen list takes over when no frame could be read; a frame that fails to read is never treated as absence)
-  - **minimize** — the window *keeps* its accessibility entry (marked minimized) for the whole genie animation, so the accessibility list can never report it gone; the on-screen list decides instead, and the window only leaves it at ~659ms when the animation ends. The accessibility read is also deliberately avoided here: during a minimize animation the app's accessibility server stops answering and that read blocks for ~515ms. Focusing before the window leaves the screen would steal focus mid-animation
-  - **hide** — no window ID is available (the element is destroyed before the notification), so the engine waits for the app to lose its windows, requiring both the accessibility list and the on-screen list to clear
-- **Confirmation**: two consecutive agreeing polls are required, so a single transient read cannot move focus while the window is still on screen
-- **Bounds**: close/hide abandon the wait at 350ms — a real close shows up in the accessibility list between ~140ms (Finder, System Settings) and ~225ms (Chrome), so this is generous while keeping a window that is genuinely staying (a browser tab closing) from hanging. A minimize keeps the full 800ms because its genie animation keeps the window on screen until ~660ms
-- **The trigger is the user's action and the app only filters**: recovery never guesses. It waits for evidence that the window actually went away, and if that evidence does not arrive the trigger is dropped rather than moving focus anyway
-- **Skip**: If the window, or the hidden app's windows, are still visible when the bound elapses (browser tab close, menu dismissal, an app that keeps other windows), recovery is skipped
-- **Supersede**: a newer trigger invalidates an in-flight re-check via a token, so rapid close/minimize/hide sequences cannot race
-- **Measured end-to-end** (decision to accepted activation, macOS 27): Cmd+W ~50ms, app hide ~280ms (close to the ~281ms signal floor), minimize ~540ms — bounded by the genie animation, which cannot be short-circuited without stealing focus mid-animation
-- **Instant skip is display-scoped**: when the trigger is a close/minimize, the "app still has another window" test looks only at the display the triggered window was on, so closing the last window on one screen still hands focus on even if the app keeps a window on another screen
+- **Trigger**: Explicit close, minimize, or app hide — always a user action
+- **Timing**: focus moves 50ms after the trigger, matching V4
+- **No dismissal verification**: V4 checked, once, 50ms after the trigger, using the private `AXCGWindowID` attribute. macOS 27 removed that attribute, so the lookup always came back empty and the check always concluded "window gone" — V4 on macOS 27 was therefore focusing unconditionally after 50ms, which is what this version reproduces. A real check cannot be both fast and correct: the window stays on screen until its animation ends (~140ms for a Finder close, ~225ms for Chrome, ~660ms for a minimize)
+- **Instant filters** (no timing involved):
+  - acting on one of several windows that leaves another on the same display does nothing, since focus does not need to move
+  - the source app is never the candidate — focus is moving away from it
+  - a next window on the same display is preferred, so acting on one screen does not push focus to another
 - **Selection Algorithm**:
   1. Get all windows visible on the active Space in front-to-back z-order
-  2. Filter: `layer 0`, owner is neither this process nor the source app (the source app's window may briefly outlive it, and the point is to move focus away from it)
-  3. Prefer a window on the display the triggered window was on (falls back to the whole Space when that display has none), then focus via the activation strategy below
-- **Display scoping**: a Space is not a display. Where "Displays have separate Spaces" is off (the default) one Space spans every screen, so the active-Space list mixes displays and the globally-topmost window may be on a screen the user is not looking at. The snapshot records each window's display so recovery can prefer the right screen
-- **Cross-display side effect**: activating an app raises all of its windows on every display — native behaviour, not caused by this app's options (verified by real-clicking a dual-display app). Recovery captures the frontmost window per display beforehand and raises back any display it was not asked to change, once activation has settled
+  2. Prefer `layer 0` on the acted-on window's display, excluding this process and the source app
+  3. Focus via the activation strategy below
 - No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
-- No background polling: the re-check runs only in response to a trigger and always terminates
 
 #### 3a. Window Ordering and Space Filtering (Priority: Critical)
 - `NSWindow.windowNumbers(options: [.allApplications])` returns visible windows on the **active Space** in z-order; this is the public API that replaces the private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow` symbols used before v5.0.0
