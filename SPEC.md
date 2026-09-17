@@ -63,17 +63,19 @@ Quit
 
 #### 3. Focus Logic (Priority: Critical)
 - **Trigger**: Explicit close, minimize, or app hide — always a user action
-- **Timing**: focus moves 50ms after the trigger, matching V4
-- **No dismissal verification**: V4 checked, once, 50ms after the trigger, using the private `AXCGWindowID` attribute. macOS 27 removed that attribute, so the lookup always came back empty and the check always concluded "window gone" — V4 on macOS 27 was therefore focusing unconditionally after 50ms, which is what this version reproduces. A real check cannot be both fast and correct: the window stays on screen until its animation ends (~140ms for a Finder close, ~225ms for Chrome, ~660ms for a minimize)
-- **Instant filters** (no timing involved):
-  - acting on one of several windows that leaves another on the same display does nothing, since focus does not need to move
-  - the source app is never the candidate — focus is moving away from it
-  - a next window on the same display is preferred, so acting on one screen does not push focus to another
+- **Verify, then focus**: recovery waits for evidence that the acted-on window actually went away. This is required: without it, closing a browser tab (the window is still there) would steal focus, and a minimize would move focus mid-animation
+- **Why the evidence is never instant**: the window stays on screen until its animation ends — measured on macOS 27 at ~140ms for a Finder close, ~225ms for Chrome, ~660ms for a minimize. The wait is at the signal's own speed, not the bound's: a 15ms poll interval means focus moves within one interval of the signal
+- **The bound only bounds non-dismissals**: a closing tab never produces the signal, so it waits out the 1.0s bound and is then skipped. Since no focus change was going to happen, that wait is invisible. Sizing the bound generously therefore costs nothing in perceived speed
+- **Evidence per dismissal kind**:
+  - **close** — the window leaves the app's accessibility window list (~140–225ms), which is well before it leaves the on-screen list, so that list decides
+  - **minimize** — the window keeps its accessibility entry (gaining only a minimized flag) for the whole animation, so the on-screen list decides; the accessibility read is also avoided there because the app's accessibility server stops answering for ~500ms mid-animation
+  - **hide** — no window ID is available (the element is destroyed before the notification), so the app losing its windows decides
+- **Confirmation**: two consecutive agreeing polls, so a single transient read cannot move focus while the window is still on screen
+- **Instant filters** (no timing involved): acting on one of several windows that leaves another on the same display does nothing; the source app is never the candidate; a next window on the same display is preferred
 - **Selection Algorithm**:
   1. Get all windows visible on the active Space in front-to-back z-order
   2. Prefer `layer 0` on the acted-on window's display, excluding this process and the source app
   3. Focus via the activation strategy below
-- No AX role, size, or activation-policy heuristics, so v2rayN and Keynote save panels are both recognized
 
 #### 3a. Window Ordering and Space Filtering (Priority: Critical)
 - `NSWindow.windowNumbers(options: [.allApplications])` returns visible windows on the **active Space** in z-order; this is the public API that replaces the private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow` symbols used before v5.0.0
