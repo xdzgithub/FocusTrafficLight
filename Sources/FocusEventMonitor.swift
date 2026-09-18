@@ -71,19 +71,6 @@ final class FocusEventMonitor {
     private var observers: [pid_t: (observer: AXObserver, runLoopSource: CFRunLoopSource, retainedSelf: UnsafeMutableRawPointer)] = [:]
     private var lastCmdHAt: TimeInterval = 0
 
-    /// Delay before the recovery check starts, per trigger kind.
-    ///
-    /// A close/minimize starts polling immediately: the first poll just reports
-    /// the window as still present, so a delay there would only add latency.
-    ///
-    /// An app hide (and the destroyed-element notification, which is decided the
-    /// same way) waits 50ms first. Its decision is read from the app's
-    /// accessibility window count, and the notification can arrive before that
-    /// count has settled, so a short margin avoids reading it mid-update.
-    private func settleDelay(for kind: FocusTriggerContext.Kind) -> TimeInterval {
-        kind.isAppHideLike ? 0.05 : 0
-    }
-
     private let debounceInterval: TimeInterval = 0.2
     private var lastTriggerAt: TimeInterval = 0
 
@@ -367,13 +354,26 @@ final class FocusEventMonitor {
         return true
     }
 
+    /// Hands a trigger to the recovery engine on the next run-loop turn.
+    ///
+    /// The async hop is deliberate — it keeps the engine's work out of an AX
+    /// callback and out of the event monitors — but it carries no delay. An app
+    /// hide used to wait 50ms here, on the theory that its notification could
+    /// arrive before the app's accessibility window count had settled. That margin
+    /// cost more than it bought: a count that has not settled yet reads as the
+    /// older, higher value, which the poll loop already treats as "keep waiting"
+    /// and re-checks 15ms later, so the delay saved at most a poll or two while
+    /// always spending 50ms. It also worked against the baseline capture, which
+    /// has to run as early as possible to record the pre-dismissal count; waiting
+    /// first risked measuring a count that had already dropped, and then the
+    /// "count went down" test could never match, leaving the trigger to time out
+    /// instead of reporting that the app kept its other windows.
     private func schedule(_ context: FocusTriggerContext) {
         AppLogger.notice(
             "Focus trigger queued: \(context.kind.rawValue) PID=\(context.sourcePID) window=\(context.targetWindowID.map(String.init) ?? "?")"
         )
 
-        let delay = settleDelay(for: context.kind)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             self?.onFocusCheckNeeded?(context)
         }
     }
