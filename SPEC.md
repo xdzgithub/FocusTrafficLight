@@ -84,21 +84,16 @@ Quit
 - If `windowNumbers` returns nothing the engine falls back to the CG list and logs that the result is not Space-filtered, rather than failing silently
 
 #### 3b. Activation Strategy (Priority: Critical)
-- Attempted in order, each step verified against `NSWorkspace.shared.frontmostApplication` and logged:
-  1. `kAXFrontmostAttribute` on the target app (plus `kAXRaiseAction` / `kAXMainAttribute` on the matching window)
-  2. `NSRunningApplication.activate(from:options:)` — cooperative activation, macOS 14+
-  3. `NSRunningApplication.activate(options: [.activateAllWindows])`
+- **Window-scoped activation**, matching what a user click does: the target window is first made the app's main/key window (`kAXRaiseAction` + `kAXMainAttribute` + `kAXFocusedAttribute`), then the app is activated with `activate(options: [])`. Per the header, activation without `.activateAllWindows` "brings only the main and key windows forward", so the app's windows on other displays are not raised
+- Strategies are attempted in order, each verified against `NSWorkspace.shared.frontmostApplication` and logged:
+  1. `window + activate(options:[])` — the window-scoped path above
+  2. `kAXFrontmostAttribute` on the target app
+  3. `NSRunningApplication.activate(from:options:)` — cooperative activation, macOS 14+
+  4. `NSRunningApplication.activate(options: [.activateAllWindows])` — last resort only
+- `.activateAllWindows` raises *all* of the app's windows on *every* display, which is what made the same app's window flash on the display the user was not working on. It is therefore not the normal path
 - `NSApplicationActivateIgnoringOtherApps` is not used: it is documented as having no effect since macOS 14
 - The target window element is matched to the chosen `CGWindowID` by comparing `kAXPositionAttribute` / `kAXSizeAttribute` with the window bounds, because macOS 27 no longer provides `AXCGWindowID`
-- Activation is **window-scoped**, matching what a user click does: the target window is made the app's main/key window, then the app is activated with `activate(options: [])`. Per the header, activation without `.activateAllWindows` "brings only the main and key windows forward", so the app's windows on other displays are not raised and focusing one display does not disturb another
-- `.activateAllWindows` is not used. It raises *all* of the app's windows on *every* display — the behaviour that made the same app's window flash on the other display — so it survives only as a last-resort fallback, after the window-scoped strategy
-- A display whose window order changes during activation is logged, with the strategy that caused it, so any remaining cross-display disturbance is visible rather than silent
-- The target window element is matched to the chosen `CGWindowID` by comparing `kAXPositionAttribute` / `kAXSizeAttribute` with the window bounds, because macOS 27 no longer provides `AXCGWindowID`
-- Activating an app raises *all* of its windows on *every* display — verified native behaviour, and not caused by the `.activateAllWindows` option: `kAXFrontmostAttribute`, `activate(options: [])`, `activate(from:options: [])` and `activate(options: [.activateAllWindows])` all disturb the other display equally. The app's window on the other display reaches the front within ~36ms
-- That side effect cannot be undone with public API: `kAXRaiseAction` on another app's window reports success but does not reorder anything while that app is not frontmost, and raising only the target window without activating the app leaves the app non-frontmost so keyboard focus does not follow. An earlier version attempted a "cross-display restore"; it never worked and only logged a false success. The behaviour is left as macOS defines it — the same thing happens when the user clicks an app
-- The target window element is matched to the chosen `CGWindowID` by comparing `kAXPositionAttribute` / `kAXSizeAttribute` with the window bounds, because macOS 27 no longer provides `AXCGWindowID`
-- Activating an app raises *all* of its windows on *every* display — verified native behaviour, not caused by the `.activateAllWindows` option: `kAXFrontmostAttribute`, `activate(options: [])`, `activate(from:options: [])` and `activate(options: [.activateAllWindows])` all disturb the other display equally. There is therefore no activation variant that focuses one display without raising the app's window on the other
-- The other displays are restored afterwards: the frontmost window on each display the user was not working on is captured beforehand and raised back above the app. The restore runs once the raise has taken effect rather than after a fixed delay (the raise is measurable at ~26ms, so a fixed 300ms wait was visible as a flash), is re-checked shortly after, and is skipped entirely when the target display is unknown
+- A display whose window order changes during activation is logged, with the strategy that caused it, so any cross-display disturbance is visible rather than silent
 
 #### 4. Accessibility Permission Handling (Priority: Critical)
 - Check permission status on launch
@@ -201,14 +196,13 @@ FocusTrafficLight/
 
 ## 5. Version History
 
-### v5.0.1 - Close-Path Signal Selection (2026-09-18)
+### v5.0.1 - Close Path and Dual-Display Behaviour (2026-09-18)
 - The close decision no longer conflates an empty accessibility window list with a failed read; empty means the acted-on window cannot be present, while a failed read falls through to the on-screen list. This removes the slow path from "closed the app's last window" (measured: Finder 106-118ms, System Settings 135-149ms, Chrome 256-273ms with no timeouts; was 270ms median with 19% timing out)
-- A close whose window ID is unknown now decides from a drop in the app's window count instead of requiring the list to become empty
-- The window-count baseline is read only for the kinds that compare against it (a hide, or a close whose window is unknown); a minimize and a known-window close read other signals and no longer pay for it. When the baseline could not be read, the decision falls back to the on-screen list instead of comparing the current count with itself, which could never succeed
-- Each dismissal logs the signal that proved it, so the fast and slow paths are distinguishable in the log
-- `kAXUIElementDestroyedNotification` is handled as its own trigger kind, separate from an app hide, with a 400ms wait bound instead of 1.2s. It is not necessarily a window — apps destroy child elements routinely (Chrome, Tencent Meeting) and the delivered element is already invalid, so the only test available is whether the app's window count dropped. A genuine window destruction registers there within ~230ms (median ~37ms), so a longer wait only adds polling noise: roughly a third of these triggers used to sit out the full 1.2s before being correctly dropped
-- `kAXUIElementDestroyedNotification` is handled as its own trigger kind
-- The cross-display "restore" was removed. It never worked (see the Activation Strategy notes), so it only produced a false success log and a timer; focusing stays scoped to the acted-on display, which is unaffected
+- A close whose window ID is unknown decides from a drop in the app's window count instead of requiring the list to become empty, and falls back to the on-screen list when the baseline count could not be read
+- The window-count baseline is read only for the kinds that compare against it (a hide, or a close whose window is unknown); a minimize and a known-window close read other signals and no longer pay for it
+- `kAXUIElementDestroyedNotification` is handled as its own trigger kind, separate from an app hide, with a 400ms wait bound instead of 1.2s. It is not necessarily a window — apps destroy child elements routinely (Chrome, Tencent Meeting) and the delivered element is already invalid, so the only test available is whether the app's window count dropped. Roughly a third of these triggers used to sit out the full 1.2s before being correctly dropped
+- The app-hide settle delay was removed, and each dismissal logs the signal that proved it, so the fast and slow paths are distinguishable
+- Activation is window-scoped (see Activation Strategy), which removes the flash on the other display; a display whose order changes during activation is logged
 
 ### v5.0.0 - macOS 27 Support (2026-09-17)
 - Private `AXCGWindowID` attribute is gone on macOS 27, leaving the target window unknown and the "did it disappear" check permanently short-circuited; window identity now comes from `NSWindow.windowNumbers` plus geometric bounds matching
