@@ -98,8 +98,11 @@ final class FocusRecoveryEngine {
 
     /// What the poll concluded.
     private enum DismissalOutcome {
-        /// The window really went away: focus the next one.
-        case dismissed
+        /// The window really went away: focus the next one. `signal` names what
+        /// proved it, so the fast and slow paths can be told apart in the log — the
+        /// reason strings alone were identical for several different situations,
+        /// which is why the slow path went unnoticed for so long.
+        case dismissed(signal: String)
         /// The app kept windows, so focus does not need to move. Decided, not an
         /// error — stop without waiting further.
         case hold(reason: String)
@@ -168,15 +171,15 @@ final class FocusRecoveryEngine {
             return
         }
 
+        // The window count is captured for every kind, not just hides: the
+        // unknown-window close path needs a baseline to detect a drop against.
         let pending = Pending(
             kind: context.kind,
             sourcePID: context.sourcePID,
             windowID: context.targetWindowID,
             windowBounds: context.targetWindowID.flatMap { snapshot.bounds(ofWindowID: $0) },
             displayID: triggeredDisplay,
-            initialWindowCount: context.kind == .windowHidden
-                ? windowOrder.accessibilityWindows(ownerPID: context.sourcePID)?.count
-                : nil
+            initialWindowCount: windowOrder.accessibilityWindows(ownerPID: context.sourcePID)?.count
         )
 
         wait(pending: pending, token: token, waited: 0)
@@ -193,9 +196,12 @@ final class FocusRecoveryEngine {
             AppLogger.notice("Not recovering — \(reason)")
             return
 
-        case .dismissed:
+        case .dismissed(let signal):
             absentPolls += 1
             if absentPolls >= requiredAbsentPolls {
+                AppLogger.notice(
+                    "Dismissal confirmed by \(signal) after \(Int(waited * 1000))ms"
+                )
                 focusNextWindow(sourcePID: pending.sourcePID, onDisplay: pending.displayID)
                 return
             }
@@ -230,29 +236,37 @@ final class FocusRecoveryEngine {
             return appHideOutcome(pending)
         }
 
-        // A close removes the window from the app's accessibility window list at
-        // once, well before it leaves the on-screen list, so that list decides when
-        // it can be read. A frame that fails to read is not evidence of absence, so
-        // the slower on-screen list takes over if nothing could be read. A matching
-        // window that is minimized also counts as dismissed.
-        if let windows = windowOrder.accessibilityWindows(ownerPID: pending.sourcePID),
-           let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0 {
-            var readableFrames = 0
-            for window in windows {
-                guard let frame = AXGeometry.frame(of: window) else { continue }
-                readableFrames += 1
-                guard abs(frame.minX - bounds.minX) <= 2, abs(frame.minY - bounds.minY) <= 2,
-                      abs(frame.width - bounds.width) <= 2, abs(frame.height - bounds.height) <= 2 else {
-                    continue
-                }
-                if AXGeometry.isMinimized(window) { return .dismissed }
-                return .pending(reason: "window \(windowID) to be dismissed")
+        // A close removes the window from the app's accessibility window list well
+        // before it leaves the on-screen list, so that list decides when it can be
+        // read. An empty list and a failed read are treated differently: empty
+        // means the app has no windows at all, so the acted-on window cannot be
+        // among them; a failed read (nil) is not evidence of anything and falls
+        // through to the slower on-screen list. Conflating the two is what pushed
+        // every "closed the last window" case onto the ~569ms on-screen signal.
+        if let windows = windowOrder.accessibilityWindows(ownerPID: pending.sourcePID) {
+            if windows.isEmpty {
+                return .dismissed(signal: "accessibility-list-empty")
             }
-            if readableFrames > 0 { return .dismissed }
+            if let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0 {
+                var readableFrames = 0
+                for window in windows {
+                    guard let frame = AXGeometry.frame(of: window) else { continue }
+                    readableFrames += 1
+                    guard abs(frame.minX - bounds.minX) <= 2, abs(frame.minY - bounds.minY) <= 2,
+                          abs(frame.width - bounds.width) <= 2, abs(frame.height - bounds.height) <= 2 else {
+                        continue
+                    }
+                    if AXGeometry.isMinimized(window) { return .dismissed(signal: "minimized-flag") }
+                    return .pending(reason: "window \(windowID) to be dismissed")
+                }
+                if readableFrames > 0 {
+                    return .dismissed(signal: "window-absent-from-list")
+                }
+            }
         }
         return windowOrder.isWindowOnScreen(windowID: windowID)
             ? .pending(reason: "window \(windowID) to be dismissed")
-            : .dismissed
+            : .dismissed(signal: "on-screen-list")
     }
 
     /// Decides a minimize from the accessibility minimized flag.
@@ -266,7 +280,7 @@ final class FocusRecoveryEngine {
         // The window is known: read its own flag.
         if let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0,
            let minimized = windowOrder.windowIsMinimized(ownerPID: pending.sourcePID, matching: bounds) {
-            return minimized ? .dismissed : .pending(reason: "window to be minimized")
+            return minimized ? .dismissed(signal: "minimized-flag") : .pending(reason: "window to be minimized")
         }
 
         // The window is unknown (a keyboard minimize whose window ID could not be
@@ -274,14 +288,16 @@ final class FocusRecoveryEngine {
         // on-screen check is deliberately not used here — that is the slow signal
         // this path exists to avoid.
         if let anyMinimized = windowOrder.anyWindowIsMinimized(ownerPID: pending.sourcePID) {
-            return anyMinimized ? .dismissed : .pending(reason: "PID \(pending.sourcePID) to minimize a window")
+            return anyMinimized
+                ? .dismissed(signal: "any-minimized-flag")
+                : .pending(reason: "PID \(pending.sourcePID) to minimize a window")
         }
 
         // The flag could not be read at all; the on-screen list is all that is left.
         if let windowID = pending.windowID, windowID > 0 {
             return windowOrder.isWindowOnScreen(windowID: windowID)
                 ? .pending(reason: "window \(windowID) to minimize")
-                : .dismissed
+                : .dismissed(signal: "on-screen-list")
         }
         return .pending(reason: "PID \(pending.sourcePID) to minimize a window")
     }
@@ -301,35 +317,36 @@ final class FocusRecoveryEngine {
     private func appHideOutcome(_ pending: Pending) -> DismissalOutcome {
         let pid = pending.sourcePID
 
-        guard pending.isAppHide else {
-            // A close whose window ID is unknown. The accessibility window list is
-            // the early signal here too: a closed window leaves it well before it
-            // leaves the on-screen list.
-            if let windows = windowOrder.accessibilityWindows(ownerPID: pid), windows.isEmpty {
-                return .dismissed
-            }
-            return .pending(reason: "PID \(pid) to lose its window")
-        }
-
-        guard let current = windowOrder.accessibilityWindows(ownerPID: pid)?.count else {
+        guard let windows = windowOrder.accessibilityWindows(ownerPID: pid) else {
             // The app's window list cannot be read; fall back to the slower
             // on-screen signal rather than guessing.
             return windowOrder.visibleLayer0WindowCount(ownerPID: pid) == 0
-                ? .dismissed
+                ? .dismissed(signal: "on-screen-count")
                 : .pending(reason: "PID \(pid) to lose its windows")
         }
 
-        let initial = pending.initialWindowCount ?? current
-        if current == 0 {
-            // No windows left: the app really gave its window up.
-            return .dismissed
+        guard pending.isAppHide else {
+            // A close whose window ID is unknown. Its own window cannot be named, so
+            // a drop in the app's window count stands in for it: the list shrinking
+            // proves some window went away. Waiting for the list to empty instead
+            // would hang for any app that keeps other windows and then time out.
+            let initial = pending.initialWindowCount ?? windows.count
+            if windows.count < initial {
+                return .dismissed(signal: "accessibility-count-drop")
+            }
+            return .pending(reason: "PID \(pid) to lose a window (has \(windows.count))")
         }
-        if current < initial {
+
+        let initial = pending.initialWindowCount ?? windows.count
+        if windows.isEmpty {
+            return .dismissed(signal: "accessibility-count-zero")
+        }
+        if windows.count < initial {
             // A window went away but the app kept others, so focus does not need
             // to move. Decided now instead of waiting out the bound.
-            return .hold(reason: "PID \(pid) still has \(current) window(s)")
+            return .hold(reason: "PID \(pid) still has \(windows.count) window(s)")
         }
-        return .pending(reason: "PID \(pid) to give up a window (has \(current))")
+        return .pending(reason: "PID \(pid) to give up a window (has \(windows.count))")
     }
 
     private func focusNextWindow(sourcePID: pid_t, onDisplay displayID: CGDirectDisplayID?) {
