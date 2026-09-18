@@ -22,17 +22,18 @@ import CoreGraphics
 ///
 /// ## Why the evidence differs by dismissal kind
 ///
-/// | action   | what proves it happened                                  |
-/// |----------|----------------------------------------------------------|
-/// | close    | the window leaves the app's accessibility window list      |
-/// | minimize | the window leaves the on-screen list (it keeps its         |
-/// |          | accessibility entry, only gaining a minimized flag)        |
-/// | hide     | the app loses its windows                                  |
+/// | action            | what proves it happened                                |
+/// |-------------------|--------------------------------------------------------|
+/// | close             | the window leaves the app's accessibility window list   |
+/// | minimize          | the window's `kAXMinimizedAttribute` flag flips         |
+/// | hide              | the app's accessibility window count drops              |
+/// | element destroyed | the app's count drops (it may not have been a window)   |
 ///
-/// The accessibility list is the earlier signal for a close (~140–225ms versus
-/// ~570ms on-screen), which is why it drives that case. During a minimize the
-/// app's accessibility server stops answering for ~500ms, so the on-screen list
-/// is used there instead.
+/// Each kind is read from the signal that actually reports it, and they are not
+/// interchangeable: a minimize leaves the count unchanged, and a hide keeps the
+/// window's own identity unavailable. The accessibility list is the earlier signal
+/// for a close (~140–225ms versus ~570ms on-screen), which is why it drives that
+/// case; a minimize keeps its accessibility entry, so its flag is read instead.
 ///
 /// macOS 27 notes: the private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow`
 /// symbols are gone and `AXCGWindowID` no longer identifies a window, so Space
@@ -93,8 +94,10 @@ final class FocusRecoveryEngine {
         /// display, so acting on one screen does not hand focus to another. nil for
         /// an app-hide trigger, which carries no window.
         let displayID: CGDirectDisplayID?
-        /// The app's accessibility window count when the trigger fired, for the
-        /// hide path (see `dismissalOutcome`).
+        /// The app's accessibility window count when the trigger fired, used by the
+        /// decisions that compare against it (`dismissalOutcome`): an app hide, or
+        /// a close whose window is unknown. nil when the trigger did not need it,
+        /// or when it could not be read.
         let initialWindowCount: Int?
 
         // A minimize keeps its accessibility entry for the whole animation, so it
@@ -187,18 +190,29 @@ final class FocusRecoveryEngine {
             return
         }
 
-        // The window count is captured for every kind, not just hides: the
-        // unknown-window close path needs a baseline to detect a drop against.
+        // The count is read only for the kinds that compare against it — an app
+        // hide and a close whose window is unknown. A minimize and a known-window
+        // close decide from other signals, so reading it for them would be a
+        // wasted accessibility query on every such trigger.
         let pending = Pending(
             kind: context.kind,
             sourcePID: context.sourcePID,
             windowID: context.targetWindowID,
             windowBounds: context.targetWindowID.flatMap { snapshot.bounds(ofWindowID: $0) },
             displayID: triggeredDisplay,
-            initialWindowCount: windowOrder.accessibilityWindows(ownerPID: context.sourcePID)?.count
+            initialWindowCount: needsWindowCountBaseline(context)
+                ? windowOrder.accessibilityWindows(ownerPID: context.sourcePID)?.count
+                : nil
         )
 
         wait(pending: pending, token: token, waited: 0)
+    }
+
+    /// Whether this trigger's decision compares the app's window count against its
+    /// value at trigger time. The baseline has to be taken now, before the window
+    /// starts going away.
+    private func needsWindowCountBaseline(_ context: FocusTriggerContext) -> Bool {
+        context.kind.isAppHideLike || (context.targetWindowID ?? 0) <= 0
     }
 
     // MARK: - Waiting for the Acted-On Window to Be Dismissed
@@ -341,19 +355,29 @@ final class FocusRecoveryEngine {
                 : .pending(reason: "PID \(pid) to lose its windows")
         }
 
-        guard pending.isAppHideLike else {
+        // The baseline is the count from trigger time. Without it a "count dropped"
+        // test cannot be evaluated, so fall back to the on-screen list instead of
+        // comparing against the current count — that would compare a value with
+        // itself and could only ever time out.
+        guard let initial = pending.initialWindowCount else {
+            if windows.isEmpty { return .dismissed(signal: "accessibility-count-zero") }
+            if windowOrder.visibleLayer0WindowCount(ownerPID: pid) == 0 {
+                return .dismissed(signal: "on-screen-count")
+            }
+            return .pending(reason: "PID \(pid) to lose its window (baseline unavailable)")
+        }
+
+        if !pending.isAppHideLike {
             // A close whose window ID is unknown. Its own window cannot be named, so
             // a drop in the app's window count stands in for it: the list shrinking
             // proves some window went away. Waiting for the list to empty instead
             // would hang for any app that keeps other windows and then time out.
-            let initial = pending.initialWindowCount ?? windows.count
             if windows.count < initial {
                 return .dismissed(signal: "accessibility-count-drop")
             }
             return .pending(reason: "PID \(pid) to lose a window (has \(windows.count))")
         }
 
-        let initial = pending.initialWindowCount ?? windows.count
         if windows.isEmpty {
             return .dismissed(signal: "accessibility-count-zero")
         }
