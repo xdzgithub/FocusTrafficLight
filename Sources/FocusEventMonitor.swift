@@ -9,7 +9,20 @@ struct FocusTriggerContext {
         case minimizeWindow = "Cmd+M"
         case closeButton = "Close Button"
         case minimizeButton = "Minimize Button"
+        /// `kAXApplicationHiddenNotification`: the app hid itself.
         case windowHidden = "Window Hidden"
+        /// `kAXUIElementDestroyedNotification`: some element of the app was
+        /// destroyed. It is not necessarily a *window* — apps also destroy child
+        /// elements (Chrome and Tencent Meeting emit this for DOM/internal
+        /// elements), and the delivered element is already invalid, so it cannot
+        /// be inspected to tell the difference. Kept separate from `windowHidden`
+        /// because that ambiguity makes it worth giving up on faster.
+        case elementDestroyed = "Element Destroyed"
+
+        /// Decided from the app's accessibility window count.
+        var isAppHideLike: Bool {
+            self == .windowHidden || self == .elementDestroyed
+        }
     }
 
     let kind: Kind
@@ -63,11 +76,12 @@ final class FocusEventMonitor {
     /// A close/minimize starts polling immediately: the first poll just reports
     /// the window as still present, so a delay there would only add latency.
     ///
-    /// An app hide waits 50ms instead. Its decision is read from the app's
-    /// accessibility window count, and the hide notification can arrive before
-    /// that count has settled, so a short margin avoids reading it mid-update.
+    /// An app hide (and the destroyed-element notification, which is decided the
+    /// same way) waits 50ms first. Its decision is read from the app's
+    /// accessibility window count, and the notification can arrive before that
+    /// count has settled, so a short margin avoids reading it mid-update.
     private func settleDelay(for kind: FocusTriggerContext.Kind) -> TimeInterval {
-        kind == .windowHidden ? 0.05 : 0
+        kind.isAppHideLike ? 0.05 : 0
     }
 
     private let debounceInterval: TimeInterval = 0.2
@@ -507,12 +521,19 @@ final class FocusEventMonitor {
         // Look, desktop interactions), so collapse them like the other triggers.
         guard canTriggerNow() else { return }
 
+        // A destroyed element may be a window or a child element, and it is already
+        // invalid so it cannot be inspected to tell which. Apps emit it for child
+        // elements routinely (Chrome, Tencent Meeting), so it is tagged as its own
+        // kind and the engine gives up on it sooner than on a real hide.
+        let isDestroyed = name == kAXUIElementDestroyedNotification as String
+        let kind: FocusTriggerContext.Kind = isDestroyed ? .elementDestroyed : .windowHidden
+
         AppLogger.notice(
-            "AX hide event: \(name) PID=\(pid) (\(NSRunningApplication(processIdentifier: pid)?.localizedName ?? "?"))"
+            "AX event: \(name) PID=\(pid) (\(NSRunningApplication(processIdentifier: pid)?.localizedName ?? "?"))"
         )
 
         let context = FocusTriggerContext(
-            kind: .windowHidden,
+            kind: kind,
             sourcePID: pid,
             targetWindowID: windowID(of: element)
         )

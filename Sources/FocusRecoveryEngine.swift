@@ -53,6 +53,22 @@ final class FocusRecoveryEngine {
     /// ~225ms, both well inside this.
     private let dismissalTimeout: TimeInterval = 1.2
 
+    /// Shorter bound for a destroyed-element notification.
+    ///
+    /// That notification is not necessarily a window — apps destroy child elements
+    /// routinely — and the delivered element is already invalid, so the only
+    /// available test is whether the app's window count dropped. A genuine window
+    /// destruction reflects itself in the count within ~230ms (measured median
+    /// ~37ms), so waiting much past that only buys noise: logs from a 30-minute
+    /// window showed 69 out of 208 of these triggers sitting out the full 1.2s
+    /// before being correctly dropped, each one polling accessibility reads on the
+    /// main thread.
+    private let destroyedElementTimeout: TimeInterval = 0.4
+
+    private func timeout(for kind: FocusTriggerContext.Kind) -> TimeInterval {
+        kind == .elementDestroyed ? destroyedElementTimeout : dismissalTimeout
+    }
+
     /// Increments on every trigger so a newer trigger supersedes an in-flight
     /// re-check instead of racing it.
     private var currentCheckToken = 0
@@ -87,12 +103,12 @@ final class FocusRecoveryEngine {
             kind == .minimizeWindow || kind == .minimizeButton
         }
 
-        /// Only a genuine app-hide notification is decided from the app's window
-        /// count. A minimize whose window ID could not be resolved must not fall
-        /// through to it: minimizing does not change the count, so it would always
-        /// time out and skip recovery.
-        var isAppHide: Bool {
-            kind == .windowHidden
+        /// Decided from the app's window count: a hide, or a destroyed element
+        /// (which may or may not have been a window). A minimize whose window ID
+        /// could not be resolved must not fall through to these: minimizing does
+        /// not change the count, so it would always time out and skip recovery.
+        var isAppHideLike: Bool {
+            kind.isAppHideLike
         }
     }
 
@@ -155,7 +171,7 @@ final class FocusRecoveryEngine {
 
         // Acting on one of several windows leaves the app present on that display,
         // so focus does not need to move. Instant decision, no waiting.
-        if context.kind != .windowHidden, let myWindow = context.targetWindowID, myWindow > 0 {
+        if !context.kind.isAppHideLike, let myWindow = context.targetWindowID, myWindow > 0 {
             let stillHasWindowHere = triggeredDisplay.map {
                 windowOrder.hasOtherVisibleLayer0Window(
                     ownerPID: context.sourcePID, onDisplay: $0, excluding: myWindow
@@ -165,7 +181,7 @@ final class FocusRecoveryEngine {
                 AppLogger.notice("App still has another window on this display, focus stays put")
                 return
             }
-        } else if context.kind != .windowHidden,
+        } else if !context.kind.isAppHideLike,
                   windowOrder.visibleLayer0WindowCount(ownerPID: context.sourcePID) >= 2 {
             AppLogger.notice("App still has another visible window, focus stays put")
             return
@@ -208,7 +224,7 @@ final class FocusRecoveryEngine {
 
         case .pending(let reason):
             absentPolls = 0
-            guard waited < dismissalTimeout else {
+            guard waited < timeout(for: pending.kind) else {
                 AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
                 return
             }
@@ -325,7 +341,7 @@ final class FocusRecoveryEngine {
                 : .pending(reason: "PID \(pid) to lose its windows")
         }
 
-        guard pending.isAppHide else {
+        guard pending.isAppHideLike else {
             // A close whose window ID is unknown. Its own window cannot be named, so
             // a drop in the app's window count stands in for it: the list shrinking
             // proves some window went away. Waiting for the list to empty instead
