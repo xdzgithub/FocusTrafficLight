@@ -115,27 +115,6 @@ final class WindowOrderService {
             }
             return candidates.first
         }
-
-        /// The frontmost normal window on each display.
-        ///
-        /// Used to undo a side effect of activation: bringing an app to the front
-        /// raises *all* of its windows on *every* display (verified to be native
-        /// behaviour, not something this app does), so the app's window on a
-        /// display the user is not looking at can jump above whatever was there.
-        /// Capturing the previous frontmost window per display lets recovery put
-        /// those displays back afterwards.
-        func topmostWindowPerDisplay(excluding excluded: Set<pid_t>) -> [CGDirectDisplayID: WindowInfo] {
-            var result: [CGDirectDisplayID: WindowInfo] = [:]
-            for windowID in ordered {
-                guard let info = infoByID[windowID], info.layer == 0,
-                      !excluded.contains(info.ownerPID),
-                      let display = info.displayID, result[display] == nil else {
-                    continue
-                }
-                result[display] = info
-            }
-            return result
-        }
     }
 
     func takeSnapshot() -> Snapshot {

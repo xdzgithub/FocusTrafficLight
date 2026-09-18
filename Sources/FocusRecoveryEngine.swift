@@ -132,7 +132,7 @@ final class FocusRecoveryEngine {
     init(accessibilityHelper: AccessibilityHelper) {
         self.accessibilityHelper = accessibilityHelper
         self.windowOrder = WindowOrderService()
-        self.activation = ActivationService(windowOrder: WindowOrderService())
+        self.activation = ActivationService()
     }
 
     func performRecoveryCheck(context: FocusTriggerContext) {
@@ -408,6 +408,6 @@ final class FocusRecoveryEngine {
         AppLogger.notice(
             "Focusing: \(app.localizedName ?? "?") window=\(candidate.windowID)\(displayID == nil ? "" : " onDisplay=\(onRequestedDisplay ? "same" : "other")")"
         )
-        activation.activate(app, targetWindow: candidate.bounds, targetDisplay: candidate.displayID)
+        activation.activate(app, targetWindow: candidate.bounds)
     }
 }
