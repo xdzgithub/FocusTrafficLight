@@ -37,9 +37,9 @@ final class ActivationService {
     /// - Parameters:
     ///   - targetWindow: bounds of the window the caller selected, used to raise
     ///     that specific window when it can be matched in the target app.
-    ///   - targetDisplay: the display the user is working on. Activation raises
-    ///     the target app's windows on *every* display, so the other displays are
-    ///     put back the way they were once activation settles.
+    ///   - targetDisplay: the display the user is working on. Activating an app
+    ///     raises its windows on *every* display, so any other display is put back
+    ///     the way it was, as soon as the raise has taken effect.
     func activate(_ app: NSRunningApplication, targetWindow: CGRect?, targetDisplay: CGDirectDisplayID?) {
         let pid = app.processIdentifier
         let name = app.localizedName ?? "?"
@@ -66,20 +66,40 @@ final class ActivationService {
 
         if displaced.isEmpty { return }
 
-        // Restore once activation has settled; raising too early would be undone
-        // by the activation still in flight.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.restore(displaced, name: name)
+        // Restore as soon as activation has visibly taken effect, rather than after
+        // a fixed delay. Bringing an app to the front raises its windows on every
+        // display (see `displacedWindows`), and the window that does not belong on
+        // top appears there within ~30ms — measured at ~26ms for Chrome. Every
+        // millisecond until the restore is that window sitting where it should not
+        // be, so the wait is kept just long enough to clear the rise (50ms) instead
+        // of the previously hard-coded 300ms, which was a guess and showed as a
+        // visible flash on the other display.
+        //
+        // A second pass runs later in case the first was still overtaken by the
+        // activation settling. `restore` re-reads the current order and skips
+        // displays that are already correct, so repeating it is harmless.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            self.restore(displaced, name: name)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.restore(displaced, name: name)
+            }
         }
     }
 
     // MARK: - Keeping Other Displays Undisturbed
 
     /// Windows that activation would newly cover, keyed by the display they are on.
+    ///
+    /// Returns nothing when the target display is unknown: without it there is no way
+    /// to tell which display the user is working on, and restoring every display
+    /// would risk raising a window back over the one just focused.
     private func displacedWindows(
         onOtherThan targetDisplay: CGDirectDisplayID?,
         activating pid: pid_t
     ) -> [CGDirectDisplayID: WindowOrderService.WindowInfo] {
+        guard let targetDisplay else { return [:] }
+
         let myPID = ProcessInfo.processInfo.processIdentifier
         let snapshot = windowOrder.takeSnapshot()
         let frontmost = snapshot.topmostWindowPerDisplay(excluding: [myPID])

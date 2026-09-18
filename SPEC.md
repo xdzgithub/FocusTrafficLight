@@ -90,6 +90,8 @@ Quit
   3. `NSRunningApplication.activate(options: [.activateAllWindows])`
 - `NSApplicationActivateIgnoringOtherApps` is not used: it is documented as having no effect since macOS 14
 - The target window element is matched to the chosen `CGWindowID` by comparing `kAXPositionAttribute` / `kAXSizeAttribute` with the window bounds, because macOS 27 no longer provides `AXCGWindowID`
+- Activating an app raises *all* of its windows on *every* display — verified native behaviour, not caused by the `.activateAllWindows` option: `kAXFrontmostAttribute`, `activate(options: [])`, `activate(from:options: [])` and `activate(options: [.activateAllWindows])` all disturb the other display equally. There is therefore no activation variant that focuses one display without raising the app's window on the other
+- The other displays are restored afterwards: the frontmost window on each display the user was not working on is captured beforehand and raised back above the app. The restore runs once the raise has taken effect rather than after a fixed delay (the raise is measurable at ~26ms, so a fixed 300ms wait was visible as a flash), is re-checked shortly after, and is skipped entirely when the target display is unknown
 
 #### 4. Accessibility Permission Handling (Priority: Critical)
 - Check permission status on launch
