@@ -132,7 +132,7 @@ final class FocusRecoveryEngine {
     init(accessibilityHelper: AccessibilityHelper) {
         self.accessibilityHelper = accessibilityHelper
         self.windowOrder = WindowOrderService()
-        self.activation = ActivationService()
+        self.activation = ActivationService(windowOrder: WindowOrderService())
     }
 
     func performRecoveryCheck(context: FocusTriggerContext) {

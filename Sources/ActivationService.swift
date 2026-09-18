@@ -32,27 +32,45 @@ import ApplicationServices
 /// log. The behaviour is therefore left as macOS defines it.
 final class ActivationService {
 
+    private let windowOrder: WindowOrderService
+
+    init(windowOrder: WindowOrderService) {
+        self.windowOrder = windowOrder
+    }
+
     enum Strategy: String {
-        /// Raise through the Accessibility API. This is the only mechanism that
-        /// lets an accessory process hand focus to another app, and it uses the
-        /// permission this app already requires.
+        /// Raise only the target window and activate without `.activateAllWindows`.
+        /// Activation then brings just the main/key windows forward, which is the
+        /// same window-scoped behaviour a user click produces — so the app's windows
+        /// on other displays are left where they are.
+        case windowScoped = "window + activate(options:[])"
+        /// Raise through the Accessibility API's application-wide frontmost flag.
         case accessibilityFrontmost = "AX frontmost"
-        /// Cooperative activation: the public replacement for the deprecated flag.
+        /// Cooperative activation, all windows.
         case cooperativeActivation = "activate(from:)"
-        /// Bare public activation, kept as the last resort.
-        case plainActivation = "activate(options:)"
+        /// Bare public activation, all windows, kept as the last resort.
+        case plainActivation = "activate(options:[all])"
 
         var displayName: String { rawValue }
+
+        /// Whether this strategy can raise the app's windows on *other* displays.
+        /// Used only to explain a disturbed display in the log.
+        var isAppWide: Bool { self != .windowScoped }
     }
 
     /// - Parameter targetWindow: bounds of the window the caller selected, used to
-    ///   raise that specific window when it can be matched in the target app.
+    ///   raise that specific window and make it the app's main/key window.
     func activate(_ app: NSRunningApplication, targetWindow: CGRect?) {
         let pid = app.processIdentifier
         let name = app.localizedName ?? "?"
 
+        // Front-to-back order of each display before activating, so a disturbance of
+        // a display we were not asked to change can be reported.
+        let before = orderPerDisplay()
+
         let attempts: [(Strategy, () -> Bool)] = [
-            (.accessibilityFrontmost, { self.raiseThroughAccessibility(pid: pid, targetWindow: targetWindow) }),
+            (.windowScoped, { self.activateWindowScoped(app, pid: pid, targetWindow: targetWindow) }),
+            (.accessibilityFrontmost, { self.raiseThroughAccessibility(pid: pid) }),
             (.cooperativeActivation, { app.activate(from: NSRunningApplication.current, options: [.activateAllWindows]) }),
             (.plainActivation, { app.activate(options: [.activateAllWindows]) })
         ]
@@ -63,23 +81,63 @@ final class ActivationService {
             AppLogger.notice(
                 "Activate \(name) via \(strategy.displayName): accepted=\(accepted) frontmost=\(isFrontmost)"
             )
-            if isFrontmost { break }
+            if isFrontmost {
+                reportDisturbedDisplays(before: before, name: name, strategy: strategy)
+                return
+            }
         }
     }
 
-    // MARK: - Accessibility
+    // MARK: - Window-Scoped Activation
 
-    private func raiseThroughAccessibility(pid: pid_t, targetWindow: CGRect?) -> Bool {
-        let appElement = AXUIElementCreateApplication(pid)
-
+    /// Makes the target window the app's main and key window, then activates the app
+    /// without `.activateAllWindows`.
+    ///
+    /// Per the header, a plain `activate` "brings only the main and key windows
+    /// forward" — which is why the target window is primed first. Without
+    /// `.activateAllWindows` the app's windows on other displays are not raised, so
+    /// focusing one display does not disturb another.
+    private func activateWindowScoped(_ app: NSRunningApplication, pid: pid_t, targetWindow: CGRect?) -> Bool {
         if let targetWindow, let window = windowElement(matching: targetWindow, ofApp: pid) {
             AXUIElementPerformAction(window, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         }
+        return app.activate(options: [])
+    }
 
-        return AXUIElementSetAttributeValue(
-            appElement,
+    // MARK: - Reporting
+
+    private func orderPerDisplay() -> [CGDirectDisplayID: [pid_t]] {
+        let snapshot = windowOrder.takeSnapshot()
+        var result: [CGDirectDisplayID: [pid_t]] = [:]
+        for info in snapshot.orderedWindowInfos where info.layer == 0 {
+            guard let display = info.displayID else { continue }
+            result[display, default: []].append(info.ownerPID)
+        }
+        return result
+    }
+
+    /// Logs each display whose window order changed, so it is visible whether a
+    /// strategy reached beyond the display it was asked to focus.
+    private func reportDisturbedDisplays(
+        before: [CGDirectDisplayID: [pid_t]],
+        name: String,
+        strategy: Strategy
+    ) {
+        let after = orderPerDisplay()
+        for (display, order) in after where before[display] != order {
+            AppLogger.notice(
+                "Display \(display) window order changed by \(strategy.displayName) (\(name)\(strategy.isAppWide ? ", app-wide strategy" : ""))"
+            )
+        }
+    }
+
+    // MARK: - Accessibility
+
+    private func raiseThroughAccessibility(pid: pid_t) -> Bool {
+        AXUIElementSetAttributeValue(
+            AXUIElementCreateApplication(pid),
             kAXFrontmostAttribute as CFString,
             kCFBooleanTrue
         ) == .success

@@ -77,6 +77,11 @@ final class WindowOrderService {
         /// Window numbers visible on the active Space, front to back.
         var orderedWindowIDs: [Int] { ordered }
 
+        /// The visible windows in front-to-back order, with their metadata.
+        var orderedWindowInfos: [WindowInfo] {
+            ordered.compactMap { infoByID[$0] }
+        }
+
         /// The window whose frame matches `frame`, used to map an accessibility
         /// element back to its `CGWindowID` now that `AXCGWindowID` is gone.
         func windowID(matchingFrame frame: CGRect, tolerance: CGFloat = 2) -> Int? {
