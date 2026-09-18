@@ -192,6 +192,11 @@ FocusTrafficLight/
 
 ## 5. Version History
 
+### v5.0.1 - Close-Path Signal Selection (2026-09-18)
+- The close decision no longer conflates an empty accessibility window list with a failed read; empty means the acted-on window cannot be present, while a failed read falls through to the on-screen list. This removes the slow path from "closed the app's last window" (measured: Finder 106-118ms, System Settings 135-149ms, Chrome 256-273ms with no timeouts; was 270ms median with 19% timing out)
+- A close whose window ID is unknown now decides from a drop in the app's window count instead of requiring the list to become empty
+- Each dismissal logs the signal that proved it, so the fast and slow paths are distinguishable in the log
+
 ### v5.0.0 - macOS 27 Support (2026-09-17)
 - Private `AXCGWindowID` attribute is gone on macOS 27, leaving the target window unknown and the "did it disappear" check permanently short-circuited; window identity now comes from `NSWindow.windowNumbers` plus geometric bounds matching
 - Private `CGSSpaceCopyCurrent` / `CGSCopySpacesForWindow` symbols are gone on macOS 27, so Space filtering had silently degraded; it now comes from the public active-Space z-order list

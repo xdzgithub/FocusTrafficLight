@@ -9,8 +9,8 @@ options:
 settings:
   base:
     PRODUCT_NAME: Focus TrafficLight
-    MARKETING_VERSION: "5.0.0"
-    CURRENT_PROJECT_VERSION: "25"
+    MARKETING_VERSION: "5.0.1"
+    CURRENT_PROJECT_VERSION: "26"
     SWIFT_VERSION: "5.0"
     ENABLE_HARDENED_RUNTIME: NO
     # A stable signing identity keeps the TCC designated requirement stable.
