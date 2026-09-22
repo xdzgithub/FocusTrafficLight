@@ -4,6 +4,12 @@ English | [中文](./README_zh.md)
 
 A macOS menu bar app that automatically manages window focus recovery.
 
+![FocusTrafficLight demo: close or minimize a window and focus moves to the next one](./docs/demo.gif)
+
+When you close, minimize, or hide a window, focus automatically moves to the next visible
+window — the same way it would if you had picked it yourself, so you never have to reach
+for the mouse or `Cmd+Tab` afterwards.
+
 ## Features
 
 - **Automatic Focus Recovery**: After closing, minimizing, or hiding a window, automatically focuses on the topmost visible window
