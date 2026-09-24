@@ -49,3 +49,7 @@ log stream --predicate 'subsystem == "com.focustrafficlight.app"' --level notice
 ## 隐私
 
 本应用需要辅助功能权限来监控窗口事件。权限仅用于焦点管理，不会收集或传输任何用户数据。
+
+## 许可证
+
+本项目基于 [MIT 许可证](./LICENSE) 发布。

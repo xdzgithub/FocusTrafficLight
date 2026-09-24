@@ -50,3 +50,7 @@ Healthy output shows `Permissions — accessibility=true`, `Traffic light mouse 
 ## Privacy
 
 This app requires Accessibility permission to monitor window events. The permission is only used for focus management. No user data is collected or transmitted.
+
+## License
+
+Released under the [MIT License](./LICENSE).
