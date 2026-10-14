@@ -1,5 +1,18 @@
 # Changelog
 
+## v5.0.2 - 2026-10-14
+
+新增：`Cmd+H` 隐藏应用后也会聚焦下一个窗口。
+
+### 新增
+- `Cmd+H` 现在是一个聚焦触发。此前该路径被刻意跳过，理由是「Cmd+H 由 macOS 自己处理」；但实测 macOS 只完成隐藏、不再把焦点交给下一个窗口，于是隐藏后焦点悬空。现把它按与 `Cmd+W` / `Cmd+M` 相同的流程处理：隐藏被确认后聚焦下一个窗口，并且是**按屏**选择（与 `Cmd+W` 一致），不会波及另一块屏。
+- 判定信号：`Cmd+H` 会整组隐藏窗口，而部分应用（实测 TextEdit）隐藏后仍把窗口留在 AX 窗口列表里，用「窗口数」判定会一直等不到而超时。因此对 `Cmd+H` 改用应用的 `isHidden` 标志，实测约 60ms 内翻转即可确认。
+- 该键仍会顺带触发一次 `kAXApplicationHiddenNotification`；已用按键时间做 0.5s 去重，两个来源不会各触发一次。
+
+### 验证
+- 实测：TextEdit 前台（Chrome 在下）按 `Cmd+H` → 30ms 内 `Dismissal confirmed by app-hidden` → 聚焦同屏的 Chrome，`frontmost=true`。
+- 回归：`Cmd+W`（30ms）、`Cmd+M`（30ms）仍正常，均按同屏聚焦。
+
 ## v5.0.1 - 2026-09-18
 
 聚焦速度与双屏行为的修复。

@@ -347,6 +347,16 @@ final class FocusRecoveryEngine {
     private func appHideOutcome(_ pending: Pending) -> DismissalOutcome {
         let pid = pending.sourcePID
 
+        // Cmd+H hides the whole window set at once. Some apps keep their windows
+        // in the accessibility list while hidden (TextEdit does), so the count
+        // test below would never fire and the recovery would time out. The app's
+        // hidden flag is the signal that actually reports what happened, and it
+        // flips within ~60ms (measured).
+        if pending.kind == .hideApp,
+           NSRunningApplication(processIdentifier: pid)?.isHidden == true {
+            return .dismissed(signal: "app-hidden")
+        }
+
         guard let windows = windowOrder.accessibilityWindows(ownerPID: pid) else {
             // The app's window list cannot be read; fall back to the slower
             // on-screen signal rather than guessing.

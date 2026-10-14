@@ -14,7 +14,7 @@ for the mouse or `Cmd+Tab` afterwards.
 
 - **Automatic Focus Recovery**: After closing, minimizing, or hiding a window, automatically focuses on the topmost visible window
 - **Close and Minimize Triggers**: Works with `Cmd+W`, `Cmd+M`, and clicking the red close or yellow minimize traffic light buttons
-- **App Hide Support**: WeChat, QQ, Feishu, and other apps with their own hide shortcuts focus the next window after hiding
+- **App Hide Support**: `Cmd+H` and apps with their own hide shortcuts (WeChat, QQ, Feishu) focus the next window after hiding
 - **Broad Compatibility**: Works with regular apps and non-standard windows such as v2rayN and Keynote save panels
 - **Menu Bar Control**: Clean menu bar interface with one-click toggle
 

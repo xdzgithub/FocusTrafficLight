@@ -196,6 +196,11 @@ FocusTrafficLight/
 
 ## 5. Version History
 
+### v5.0.2 - Cmd+H Hide Trigger (2026-10-14)
+- `Cmd+H` is now a focus trigger, handled like `Cmd+W` / `Cmd+M`. macOS performs the hide but does not move focus to the next window, so hiding the frontmost app used to leave focus nowhere; recovery now focuses the next window, scoped to the same display
+- A `Cmd+H` hide is confirmed from the app's `isHidden` flag rather than the accessibility window count: some apps (TextEdit measured) keep their windows in the accessibility list while hidden, so the count test never fires and would time out. The flag flips within ~60ms
+- The `kAXApplicationHiddenNotification` that `Cmd+H` also produces is de-duplicated by keypress time (0.5s) so the two sources do not trigger twice
+
 ### v5.0.1 - Close Path and Dual-Display Behaviour (2026-09-18)
 - The close decision no longer conflates an empty accessibility window list with a failed read; empty means the acted-on window cannot be present, while a failed read falls through to the on-screen list. This removes the slow path from "closed the app's last window" (measured: Finder 106-118ms, System Settings 135-149ms, Chrome 256-273ms with no timeouts; was 270ms median with 19% timing out)
 - A close whose window ID is unknown decides from a drop in the app's window count instead of requiring the list to become empty, and falls back to the on-screen list when the baseline count could not be read

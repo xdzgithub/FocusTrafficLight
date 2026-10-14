@@ -7,6 +7,11 @@ struct FocusTriggerContext {
     enum Kind: String {
         case closeWindow = "Cmd+W"
         case minimizeWindow = "Cmd+M"
+        /// `Cmd+H`: the frontmost app hides itself. macOS performs the hide but
+        /// no longer moves focus to the next window, so it is handled like the
+        /// other user actions. Decided from the app's window count, like the
+        /// hide notification it also produces.
+        case hideApp = "Cmd+H"
         case closeButton = "Close Button"
         case minimizeButton = "Minimize Button"
         /// `kAXApplicationHiddenNotification`: the app hid itself.
@@ -21,7 +26,7 @@ struct FocusTriggerContext {
 
         /// Decided from the app's accessibility window count.
         var isAppHideLike: Bool {
-            self == .windowHidden || self == .elementDestroyed
+            self == .hideApp || self == .windowHidden || self == .elementDestroyed
         }
     }
 
@@ -36,6 +41,7 @@ struct FocusTriggerContext {
 /// Explicit user actions can schedule focus recovery:
 ///   - Cmd+W closes a window
 ///   - Cmd+M minimizes a window
+///   - Cmd+H hides the frontmost app
 ///   - a real mouse click on the red close / yellow minimize button
 ///   - a frontmost app hides itself or removes all of its traffic-light
 ///     windows through an app-specific shortcut
@@ -125,12 +131,15 @@ final class FocusEventMonitor {
     private func handleKeyDown(_ event: NSEvent) {
         guard event.modifierFlags.contains(.command), !event.isARepeat else { return }
 
+        // Cmd+H is remembered so the app-hide notification it also produces is
+        // not treated as a second, separate trigger.
         if event.keyCode == 4 {
             lastCmdHAt = Date().timeIntervalSince1970
         }
 
         let kind: FocusTriggerContext.Kind
         switch event.keyCode {
+        case 4: kind = .hideApp
         case 13: kind = .closeWindow
         case 46: kind = .minimizeWindow
         default: return
@@ -143,9 +152,13 @@ final class FocusEventMonitor {
         // The key event's window number is the window being closed/minimized.
         // Synthetic and replayed events can carry a stale or foreign number, so
         // only trust it when it really belongs to the frontmost app; otherwise
-        // fall back to that app's frontmost window.
+        // fall back to that app's frontmost window. A hide has no single window —
+        // the whole window set goes away — so it is left unknown and decided
+        // from that app's window count instead.
         let windowID: Int?
-        if event.windowNumber != 0, snapshot.ownerPID(ofWindowID: event.windowNumber) == pid {
+        if kind.isAppHideLike {
+            windowID = nil
+        } else if event.windowNumber != 0, snapshot.ownerPID(ofWindowID: event.windowNumber) == pid {
             windowID = event.windowNumber
         } else {
             windowID = snapshot.topmostWindow(ownerPID: pid)?.windowID
@@ -483,8 +496,8 @@ final class FocusEventMonitor {
 
         let now = Date().timeIntervalSince1970
         if now - lastCmdHAt < 0.5 {
-            // Cmd+H is already handled by macOS; the app-hide notification it
-            // produces would only race the system's own focus transfer.
+            // Cmd+H already raised its own trigger, so the app-hide notification
+            // it also produces must not schedule a second recovery.
             return
         }
 
