@@ -222,6 +222,32 @@ final class WindowOrderService {
         return windows.contains { AXGeometry.isMinimized($0) }
     }
 
+    /// Minimizes the window whose frame matches `bounds`, or nil when it was not
+    /// found.
+    ///
+    /// `Cmd+M` is a request the app may simply not implement — Parallels Desktop
+    /// (measured) ignores it entirely while its window still exposes a settable
+    /// `kAXMinimizedAttribute`. Writing that attribute goes through the window
+    /// server rather than the app's command handling, so it works where the
+    /// keystroke does not. Returns the result of the write so the caller can tell
+    /// "the app refused" from "the write was accepted".
+    func minimizeWindow(ownerPID pid: pid_t, matching bounds: CGRect, tolerance: CGFloat = 2) -> Bool? {
+        guard let windows = accessibilityWindows(ownerPID: pid) else { return nil }
+        for window in windows {
+            guard let frame = AXGeometry.frame(of: window) else { continue }
+            guard abs(frame.minX - bounds.minX) <= tolerance, abs(frame.minY - bounds.minY) <= tolerance,
+                  abs(frame.width - bounds.width) <= tolerance, abs(frame.height - bounds.height) <= tolerance else {
+                continue
+            }
+            return AXUIElementSetAttributeValue(
+                window,
+                kAXMinimizedAttribute as CFString,
+                kCFBooleanTrue
+            ) == .success
+        }
+        return nil
+    }
+
     func visibleLayer0WindowCount(ownerPID pid: pid_t) -> Int {
         let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],

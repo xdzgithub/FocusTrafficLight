@@ -70,6 +70,17 @@ final class FocusRecoveryEngine {
         kind == .elementDestroyed ? destroyedElementTimeout : dismissalTimeout
     }
 
+    /// How long a `Cmd+M` is given to take effect before the app is assumed not to
+    /// have handled it.
+    ///
+    /// The app is asked to minimize by the keystroke, and it may simply not
+    /// implement that command (Parallels Desktop ignores it), so the keypress
+    /// produces no observable change at all. Apps that do handle it have already
+    /// flipped the flag by the first poll (measured 15ms on TextEdit, Chrome and
+    /// Finder), so this delay leaves roughly an eightfold margin while keeping a
+    /// window that will never minimize from sitting in the poll loop.
+    private let minimizeFallbackDelay: TimeInterval = 0.12
+
     /// Increments on every trigger so a newer trigger supersedes an in-flight
     /// re-check instead of racing it.
     private var currentCheckToken = 0
@@ -80,6 +91,11 @@ final class FocusRecoveryEngine {
     /// it is still on screen. Confirming on the next interval costs 15ms.
     private var absentPolls = 0
     private let requiredAbsentPolls = 2
+
+    /// Whether this trigger has already tried minimizing on the app's behalf.
+    /// One attempt per trigger: a second write would fight an app that is merely
+    /// slow, and the point is only to cover apps that do nothing at all.
+    private var minimizeFallbackAttempted = false
 
     /// What the current trigger is waiting for.
     private struct Pending {
@@ -139,6 +155,7 @@ final class FocusRecoveryEngine {
         currentCheckToken += 1
         let token = currentCheckToken
         absentPolls = 0
+        minimizeFallbackAttempted = false
 
         AppLogger.notice(
             "Focus check triggered by \(context.kind.rawValue) — source PID=\(context.sourcePID) window=\(context.targetWindowID.map(String.init) ?? "?")"
@@ -238,6 +255,17 @@ final class FocusRecoveryEngine {
 
         case .pending(let reason):
             absentPolls = 0
+
+            // A minimize the app never performed will never be reported by any
+            // signal, so waiting out the bound only burns polls and then skips
+            // recovery. Once the window has had `minimizeFallbackDelay` to react,
+            // do the minimize ourselves and keep watching the same window — the
+            // decision logic is unchanged, only the action is supplied.
+            if pending.isMinimize, !minimizeFallbackAttempted, waited >= minimizeFallbackDelay {
+                minimizeFallbackAttempted = true
+                attemptMinimizeFallback(pending)
+            }
+
             guard waited < timeout(for: pending.kind) else {
                 AppLogger.notice("Still waiting for \(reason) after \(Int(waited * 1000))ms, skipping recovery")
                 return
@@ -248,6 +276,36 @@ final class FocusRecoveryEngine {
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
             self?.wait(pending: pending, token: token, waited: waited + interval)
         }
+    }
+
+    /// Minimizes the window on the app's behalf when `Cmd+M` did nothing.
+    ///
+    /// `Cmd+M` is an application command, not a window operation: the system asks
+    /// the app to minimize, and an app that never wired the command up just ignores
+    /// it. Parallels Desktop does exactly that — measured, its VM window stays put
+    /// on `Cmd+M` while `kAXMinimizedAttribute` is settable and writing it works.
+    ///
+    /// This only runs after the app has had `minimizeFallbackDelay` and produced no
+    /// signal, so an app that handles the key normally is never touched: its flag
+    /// has already flipped by then and the caller never reaches this path. The
+    /// write does not decide anything — the poll loop still requires the same
+    /// evidence before focus moves.
+    private func attemptMinimizeFallback(_ pending: Pending) {
+        guard let bounds = pending.windowBounds, bounds.width > 0, bounds.height > 0 else {
+            // A minimize whose window could not be named cannot be acted on; the
+            // existing fallback (any window of the app minimized) still decides.
+            AppLogger.notice("Minimize fallback skipped — PID \(pending.sourcePID)'s window is unknown")
+            return
+        }
+
+        guard let accepted = windowOrder.minimizeWindow(ownerPID: pending.sourcePID, matching: bounds) else {
+            AppLogger.notice("Minimize fallback skipped — PID \(pending.sourcePID)'s window not found")
+            return
+        }
+
+        AppLogger.notice(
+            "Minimize fallback: PID \(pending.sourcePID) did not handle Cmd+M, minimized it via accessibility (accepted=\(accepted))"
+        )
     }
 
     /// Decides whether the acted-on window is gone.

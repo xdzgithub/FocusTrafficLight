@@ -47,10 +47,9 @@ Quit
 ### Core Features
 
 #### 1. Trigger Monitoring (Priority: Critical)
-- Global keyboard monitor for `Cmd+W` (close window) and `Cmd+M` (minimize window)
+- Global keyboard monitor for `Cmd+W` (close window), `Cmd+M` (minimize window) and `Cmd+H` (hide app)
 - Mouse event tap for real clicks on red close / yellow minimize buttons
 - AX notifications for apps with their own hide shortcuts (WeChat, QQ, Feishu...)
-- `Cmd+H` is suppressed so the system's own hide behavior is not doubled
 
 #### 2. Trigger Recognition (Priority: Critical)
 - Keyboard and traffic light clicks capture the frontmost app and its target window at event time
@@ -70,6 +69,9 @@ Quit
 - **Evidence per dismissal kind**:
   - **close** — the window leaves the app's accessibility window list (~140–225ms), which is well before it leaves the on-screen list, so that list decides
   - **minimize** — the minimized flag on the window (`kAXMinimizedAttribute`), which flips at ~120–360ms and is the earliest reliable signal; the on-screen list only clears at ~725–940ms and is jittery enough to overrun the bound. When the acted-on window is unknown, any minimized window of the app is used; the on-screen list is the last resort. A minimize is never decided from the app's window count, which it does not change
+    - `Cmd+M` is an *application* command, not a window operation: the system asks the app to minimize, and an app that never wired the command up ignores it outright. Parallels Desktop does exactly that — measured, its VM window is untouched 4s after `Cmd+M` with this app not running, while `kAXMinimizedAttribute` on that window is settable and writing it minimizes it. Since such a minimize produces no signal at all, waiting out the bound only burns polls and then skips recovery
+    - The fallback: once the window has had `minimizeFallbackDelay` (0.12s) and no signal has appeared, the engine writes `kAXMinimizedAttribute` itself, once per trigger, and keeps watching the same window. Sizing it near the fast end matters two ways — an app that handles the key has already flipped the flag (measured at 15ms for TextEdit, Chrome and Finder), so it is never touched, while an app that never will does not sit in the poll loop. Recovery logic is unchanged; only the action is supplied
+    - Measured on the fallback path: Parallels Desktop confirmed at 150ms and focused the next window; TextEdit, Chrome and Finder confirmed at 15ms with the fallback never firing
   - **hide** — no window ID is available (the element is destroyed before the notification), so the app's *window count* decides and nothing else. It drops as soon as the window is given up (~140ms for WeChat), whereas the on-screen list lags until the hide/close animation ends (~400ms), so waiting on the count roughly triples the responsiveness. A count that merely stays the same (a dismissed menu or panel) never fires, which is what keeps the false positives out without needing the on-screen signal as well
 - **Confirmation**: two consecutive agreeing polls, so a single transient read cannot move focus while the window is still on screen
 - **Instant filters** (no timing involved): acting on one of several windows that leaves another on the same display does nothing; the source app is never the candidate; a next window on the same display is preferred
@@ -195,6 +197,12 @@ FocusTrafficLight/
 ```
 
 ## 5. Version History
+
+### v5.0.3 - Minimize Fallback for Apps That Ignore Cmd+M (2026-10-30)
+- `Cmd+M` is an application command, so an app that never implemented it ignores the keystroke completely and no signal of any kind appears. Parallels Desktop does this: measured with this app not running, its VM window was untouched 4s after `Cmd+M`, while `kAXMinimizedAttribute` on the same window is settable and writing it minimizes it
+- Such a minimize used to wait out the 1.0s bound and then skip recovery, so focus never moved. Now, once the window has had 0.12s without a signal, the engine writes `kAXMinimizedAttribute` itself — once per trigger, by matching window frame — and keeps watching the same window
+- The delay is sized so an app that handles the key itself is never touched: the flag has already flipped by then (measured 15ms on TextEdit, Chrome and Finder). Recovery logic is unchanged; only the action is supplied, and the same evidence is still required before focus moves
+- Measured: Parallels Desktop confirmed at 150ms then focused the next window; TextEdit, Chrome and Finder confirmed at 15ms with the fallback never firing
 
 ### v5.0.2 - Cmd+H Hide Trigger (2026-10-14)
 - `Cmd+H` is now a focus trigger, handled like `Cmd+W` / `Cmd+M`. macOS performs the hide but does not move focus to the next window, so hiding the frontmost app used to leave focus nowhere; recovery now focuses the next window, scoped to the same display
