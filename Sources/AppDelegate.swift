@@ -50,24 +50,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // One item, not two: the version is the context for the action, and
+        // splitting it into a separate disabled row only took up a line.
         let checkForUpdatesItem = NSMenuItem(
-            title: Localized.string("menu.checkForUpdates"),
+            title: Localized.string("menu.checkForUpdates", UpdaterService.shortVersion),
             action: #selector(checkForUpdates(_:)),
             keyEquivalent: ""
         )
         checkForUpdatesItem.target = self
         menu.addItem(checkForUpdatesItem)
-
-        // Shown for information only — knowing which build is running is the
-        // first thing anyone needs when reporting a problem, and until now the
-        // menu did not say.
-        let versionItem = NSMenuItem(
-            title: Localized.string("menu.version", UpdaterService.shortVersion),
-            action: nil,
-            keyEquivalent: ""
-        )
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
 
         let starItem = NSMenuItem(
             title: Localized.string("menu.star"),

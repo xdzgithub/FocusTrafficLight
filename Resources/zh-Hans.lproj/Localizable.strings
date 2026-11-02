@@ -1,8 +1,7 @@
 /* 菜单项 */
 "menu.enable" = "启用聚焦";
 "menu.launchAtLogin" = "开机时启动";
-"menu.checkForUpdates" = "检查更新…";
-"menu.version" = "版本 %@";
+"menu.checkForUpdates" = "检查更新（当前 V%@）";
 "menu.star" = "在 GitHub 上点星";
 "menu.quit" = "退出";
 

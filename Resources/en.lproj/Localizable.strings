@@ -1,8 +1,7 @@
 /* Menu items */
 "menu.enable" = "Enable Focus";
 "menu.launchAtLogin" = "Launch at Login";
-"menu.checkForUpdates" = "Check for Updates…";
-"menu.version" = "Version %@";
+"menu.checkForUpdates" = "Check for Updates (current v%@)";
 "menu.star" = "Star on GitHub";
 "menu.quit" = "Quit";
 
