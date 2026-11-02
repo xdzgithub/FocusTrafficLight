@@ -40,8 +40,8 @@ The app depends on macOS window and Accessibility APIs, and every macOS release 
 
 ## Installation
 
-1. Download `Focus TrafficLight.zip`
-2. Extract and drag to Applications folder
+1. Download `FocusTrafficLight_v27.2.0.dmg` and open it
+2. Drag **Focus TrafficLight** into the **Applications** folder next to it
 3. Grant Accessibility permission on first launch, **restart the app after granting permission**
 
 ## Usage

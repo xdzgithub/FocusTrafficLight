@@ -222,7 +222,8 @@ FocusTrafficLight/
 - The feed is a static `appcast.xml` published as a release asset and read through `releases/latest/download/appcast.xml`, so there is no server to run
 - Authenticity comes from EdDSA: the public key ships in `SUPublicEDKey` and the private key stays in the local keychain. Replacing the published files cannot produce an installable update
 - Measured with a local feed: the app read the feed, downloaded, verified, replaced and restarted, ending on the fed version. **This confirms Sparkle accepts updates signed with the local self-signed certificate** — the earlier concern that a non-Developer-ID identity would be rejected was wrong
-- `scripts/release.sh` now performs the whole release, including `generate_appcast`. A hand-written appcast carries no `sparkle:edSignature`, and updates built from it are rejected
+- Releases ship a **DMG** (`FocusTrafficLight_v<version>.dmg`) rather than a zip: the image holds the app beside an `/Applications` symlink, so installing is a single drag. Sparkle reads the DMG directly, so the update path is unchanged
+- `scripts/release.sh` now performs the whole release, including `generate_appcast`. A hand-written appcast carries no `sparkle:edSignature`, and updates built from it are rejected. Re-running it for an already-published version replaces that release's archive assets instead of failing on the existing tag, so the packaging format can change without a version bump
 
 ### v5.0.4 - Focus No Longer Escapes an App That Still Has a Window (2026-11-02)
 - Closing one of an app's last two windows used to hand focus to another app instead of leaving it with the surviving window. Reported on Terminal, and earlier on Finder

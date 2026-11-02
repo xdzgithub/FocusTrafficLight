@@ -39,8 +39,8 @@ macOS 菜单栏应用，自动管理窗口焦点恢复。
 
 ## 安装
 
-1. 下载 `Focus TrafficLight.zip`
-2. 解压并拖入应用程序文件夹
+1. 下载 `FocusTrafficLight_v27.2.0.dmg` 并双击打开
+2. 把 **Focus TrafficLight** 拖入旁边的 **Applications** 文件夹
 3. 首次启动时授予辅助功能权限，**授权后需重启应用**
 
 ## 使用
