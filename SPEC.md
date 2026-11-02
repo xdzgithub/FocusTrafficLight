@@ -116,10 +116,14 @@ Quit
 1. Click menu bar icon → Shows menu
 2. Toggle "Enabled" → Enables/disables window focus behavior
 3. Toggle "Launch at Login" → Enables/disables login item
-4. "Check for Updates…" → the only path that touches the network; runs a Sparkle check and asks before installing
-5. "Version x.y.z" → read-only, shows the running build
-6. "Star on GitHub" → opens the repository in the browser
-7. Click "Quit" → Terminates application
+4. "Check for Updates (current vX.Y.Z)" → the only path that touches the network; runs a Sparkle check and asks before installing. The version shown is the running build, so the action and its context share one row
+5. "Star on GitHub" → opens the repository in the browser
+6. Click "Quit" → Terminates application
+
+### Versioning
+- Versions track the macOS version: `V<major>.<minor>.<patch>`, where the first two components come from `sw_vers -productVersion` and the patch counts fixes within that macOS release. On macOS 27.2 the release is **V27.2.0**; fixes for the same system are V27.2.1, V27.2.2, …
+- Rationale: the app depends on macOS window and Accessibility APIs, and v5.0.0 existed only because macOS 27 removed several private interfaces. Any macOS release can change those APIs again, so encoding the system version in the release lets a user find the build that matches their OS instead of installing a mismatched one
+- `CFBundleVersion` is `major*10000 + minor*100 + patch` (27.2.0 → 270200), which stays strictly increasing across Sparkle comparisons: 27.2.9=270209 < 27.3.0=270300 < 27.10.0=271000
 
 ### Data Handling
 - **UserDefaults**: Stores enabled state and launch-at-login preference
@@ -209,12 +213,15 @@ FocusTrafficLight/
 
 ## 5. Version History
 
-### v5.0.5 - In-App Updates and a Visible Version (2026-11-02)
-- The menu now shows the running version and offers "Check for Updates…", which downloads and installs through Sparkle 2.10 instead of sending the user to GitHub for a manual download, unzip and drag
+### v27.2.0 - In-App Updates, Visible Version, macOS-Aligned Versioning (2026-11-02)
+- Versions now track the macOS version: `V<major>.<minor>.<patch>`, so the release for macOS 27.2 is V27.2.0 and its fixes are V27.2.1, … The patch counts fixes within that macOS release
+- Reason for the change: the app depends on macOS window and Accessibility APIs, and v5.0.0 existed only because macOS 27 removed several private interfaces. Encoding the system version in the release lets a user pick the build matching their OS rather than installing a mismatched one
+- `CFBundleVersion` becomes `major*10000 + minor*100 + patch` (270200), which is strictly increasing for Sparkle: 27.2.9=270209 < 27.3.0=270300 < 27.10.0=271000
+- The menu now shows the running version and offers "Check for Updates (current vX.Y.Z)", which downloads and installs through Sparkle 2.10 instead of sending the user to GitHub for a manual download, unzip and drag. The version and the action are one row: the version is the context for the action, and a separate disabled row only cost a line
 - Checking is strictly manual: `SUEnableAutomaticChecks` is false and `SUScheduledCheckInterval` is 0, so nothing runs at launch or in the background; `automaticallyDownloadsUpdates` is off so an available update still needs a click
 - The feed is a static `appcast.xml` published as a release asset and read through `releases/latest/download/appcast.xml`, so there is no server to run
 - Authenticity comes from EdDSA: the public key ships in `SUPublicEDKey` and the private key stays in the local keychain. Replacing the published files cannot produce an installable update
-- Measured with a local feed: the app read 5.0.5, downloaded, verified, replaced and restarted, ending on 5.0.5. **This confirms Sparkle accepts updates signed with the local self-signed certificate** — the earlier concern that a non-Developer-ID identity would be rejected was wrong
+- Measured with a local feed: the app read the feed, downloaded, verified, replaced and restarted, ending on the fed version. **This confirms Sparkle accepts updates signed with the local self-signed certificate** — the earlier concern that a non-Developer-ID identity would be rejected was wrong
 - `scripts/release.sh` now performs the whole release, including `generate_appcast`. A hand-written appcast carries no `sparkle:edSignature`, and updates built from it are rejected
 
 ### v5.0.4 - Focus No Longer Escapes an App That Still Has a Window (2026-11-02)

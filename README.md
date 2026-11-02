@@ -22,9 +22,21 @@ for the mouse or `Cmd+Tab` afterwards.
 
 ## Requirements
 
-- **macOS 27 or later**: use this version (v5.x)
+- **macOS 27 or later**: use a v27.x release
 - **macOS 15 or earlier**: use the **V4 release** — [v4.0.6](https://github.com/xdzgithub/FocusTrafficLight/releases/tag/v4.0.6)
 - Accessibility permission required
+
+## Versioning
+
+Versions track the macOS version: **`V<osMajor>.<osMinor>.<fix>`**.
+
+| Your macOS | Download |
+| --- | --- |
+| 27.2 | V27.2.0 |
+| 27.2 (fixes within that release) | V27.2.1, V27.2.2… |
+| 27.3 | V27.3.0 |
+
+The app depends on macOS window and Accessibility APIs, and every macOS release can change them — macOS 27 removed several private interfaces the app used to rely on, which is why v5.0.0 was a rewrite. Encoding the system version in the release lets you find the build that matches your OS instead of installing a mismatched one.
 
 ## Installation
 

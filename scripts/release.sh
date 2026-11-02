@@ -8,14 +8,14 @@
 # signature — a hand-written appcast has no `sparkle:edSignature`, and every
 # update built from it will be rejected by the running app.
 #
-# Usage:  ./scripts/release.sh 5.0.5
+# Usage:  ./scripts/release.sh 27.2.0
 set -euo pipefail
 
-VERSION="${1:?usage: release.sh <version>  e.g. release.sh 5.0.5}"
+VERSION="${1:?usage: release.sh <version>  e.g. release.sh 27.2.0}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-APP_NAME="Focus Traffic Light"
+APP_NAME="Focus TrafficLight"
 BUILD_DIR="$REPO_ROOT/Build/Build/Products/Release"
 STAGE="$REPO_ROOT/build/release"
 ZIP_NAME="FocusTrafficLight_v${VERSION}.zip"
