@@ -38,12 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        let enabledItem = NSMenuItem(title: "Enable Focus", action: #selector(toggleEnabled(_:)), keyEquivalent: "")
+        let enabledItem = NSMenuItem(title: Localized.string("menu.enable"), action: #selector(toggleEnabled(_:)), keyEquivalent: "")
         enabledItem.target = self
         enabledItem.state = isEnabled ? .on : .off
         menu.addItem(enabledItem)
 
-        let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        let launchAtLoginItem = NSMenuItem(title: Localized.string("menu.launchAtLogin"), action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         launchAtLoginItem.target = self
         launchAtLoginItem.state = isLaunchAtLoginEnabled() ? .on : .off
         menu.addItem(launchAtLoginItem)
@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let checkForUpdatesItem = NSMenuItem(
-            title: "Check for Updates…",
+            title: Localized.string("menu.checkForUpdates"),
             action: #selector(checkForUpdates(_:)),
             keyEquivalent: ""
         )
@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // first thing anyone needs when reporting a problem, and until now the
         // menu did not say.
         let versionItem = NSMenuItem(
-            title: "Version \(UpdaterService.shortVersion)",
+            title: Localized.string("menu.version", UpdaterService.shortVersion),
             action: nil,
             keyEquivalent: ""
         )
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(versionItem)
 
         let starItem = NSMenuItem(
-            title: "Star on GitHub",
+            title: Localized.string("menu.star"),
             action: #selector(openGitHubRepository(_:)),
             keyEquivalent: ""
         )
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: Localized.string("menu.quit"), action: #selector(quitApp(_:)), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -129,9 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The updater failed to start at launch, so there is nothing to ask.
             // Saying so beats a menu item that appears to do nothing.
             let alert = NSAlert()
-            alert.messageText = "Cannot Check for Updates"
-            alert.informativeText = "The updater did not start. See the unified log for details."
+            alert.messageText = Localized.string("alert.updateUnavailable.title")
+            alert.informativeText = Localized.string("alert.updateUnavailable.message")
             alert.alertStyle = .warning
+            alert.addButton(withTitle: Localized.string("alert.ok"))
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
             return

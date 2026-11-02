@@ -1,0 +1,12 @@
+/* Menu items */
+"menu.enable" = "Enable Focus";
+"menu.launchAtLogin" = "Launch at Login";
+"menu.checkForUpdates" = "Check for Updates…";
+"menu.version" = "Version %@";
+"menu.star" = "Star on GitHub";
+"menu.quit" = "Quit";
+
+/* Update failure alert */
+"alert.updateUnavailable.title" = "Cannot Check for Updates";
+"alert.updateUnavailable.message" = "The updater did not start. See the unified log for details.";
+"alert.ok" = "OK";

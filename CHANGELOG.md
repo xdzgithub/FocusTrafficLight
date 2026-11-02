@@ -8,6 +8,7 @@
 - 菜单显示 `Version 5.0.5`。此前界面完全不显示版本号，排查问题时无法确认用户装的是哪一版。
 - 新增「Check for Updates…」：接入 Sparkle 2.10，检查后可在应用内完成下载与安装，无需再去 GitHub 手动下载、解压、拖拽。
 - 新增「Star on GitHub」，直接打开项目主页。
+- **菜单跟随系统语言**：中文环境下显示「启用聚焦／开机时启动／检查更新…／版本 5.0.5／在 GitHub 上点星／退出」。此前全部硬编码英文。Sparkle 自身的更新对话框同样自带中文。
 - **只在点击时联网**：`SUEnableAutomaticChecks` 为 false、检查间隔为 0，启动时或后台都不会发出任何请求；`automaticallyDownloadsUpdates` 同样关闭，即使检查到新版本也要用户确认才安装。
 
 ### 更新真实性

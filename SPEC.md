@@ -107,6 +107,11 @@ Quit
 - Use `SMAppService` for modern launch-at-login (macOS 13+)
 - Menu item shows current state with checkmark
 
+### Localization
+- Menu and alert text lives in `Resources/{en,zh-Hans}.lproj/Localizable.strings` and is looked up through `Localized.string(_:)`; there is no nib to localize in a menu-bar app
+- Chinese is bundled because the users are; English stays the development region so any other system language falls back to readable text instead of raw keys
+- Sparkle's own update panel carries its own translation (`zh_CN.lproj` ships in the framework), so no work is needed there
+
 ### User Interactions
 1. Click menu bar icon → Shows menu
 2. Toggle "Enabled" → Enables/disables window focus behavior

@@ -1,0 +1,12 @@
+/* 菜单项 */
+"menu.enable" = "启用聚焦";
+"menu.launchAtLogin" = "开机时启动";
+"menu.checkForUpdates" = "检查更新…";
+"menu.version" = "版本 %@";
+"menu.star" = "在 GitHub 上点星";
+"menu.quit" = "退出";
+
+/* 更新失败提示 */
+"alert.updateUnavailable.title" = "无法检查更新";
+"alert.updateUnavailable.message" = "更新组件未能启动。详情请查看统一日志。";
+"alert.ok" = "好";
