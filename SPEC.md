@@ -75,6 +75,7 @@ Quit
   - **hide** — no window ID is available (the element is destroyed before the notification), so the app's *window count* decides and nothing else. It drops as soon as the window is given up (~140ms for WeChat), whereas the on-screen list lags until the hide/close animation ends (~400ms), so waiting on the count roughly triples the responsiveness. A count that merely stays the same (a dismissed menu or panel) never fires, which is what keeps the false positives out without needing the on-screen signal as well
 - **Confirmation**: two consecutive agreeing polls, so a single transient read cannot move focus while the window is still on screen
 - **Instant filters** (no timing involved): acting on one of several windows that leaves another on the same display does nothing; the source app is never the candidate; a next window on the same display is preferred
+- **The "still has a window" test is asked twice**: once at trigger time, and again after the dismissal is confirmed but before focus actually moves. Apps do not answer it consistently during the close — some briefly drop the *surviving* window from the on-screen list while another of their windows goes away (Terminal; Finder reported earlier). The window is alive and correctly framed, just unreported for a moment. With only one window left there is nothing else in the list to mask that gap, so the trigger-time read concludes the app has no windows and hands focus away; with three or more, some window usually escapes the gap, which is why the failure looks count-dependent. It is a race, not a rule. By the time the dismissal is confirmed (15–150ms later) the app has settled, so the second read sees the surviving window and focus is correctly held. When the app really did close its last window both reads agree, so normal recovery is unchanged. Costs one extra window-list query
 - **Selection Algorithm**:
   1. Get all windows visible on the active Space in front-to-back z-order
   2. Prefer `layer 0` on the acted-on window's display, excluding this process and the source app
@@ -197,6 +198,13 @@ FocusTrafficLight/
 ```
 
 ## 5. Version History
+
+### v5.0.4 - Focus No Longer Escapes an App That Still Has a Window (2026-11-02)
+- Closing one of an app's last two windows used to hand focus to another app instead of leaving it with the surviving window. Reported on Terminal, and earlier on Finder
+- The cause was the sampling moment, not the number of displays: the "does this app still have a window here" test ran once at trigger time, and during a close some apps briefly drop the *surviving* window from the on-screen list — alive and correctly framed, simply not reported for that instant. With one window left nothing else in the list masks the gap, so the app was judged to have no windows; with three or more windows one usually escapes the gap, which is why the failure looked count-dependent. It is a race, and the count only changes how often it is hit
+- The test is now asked a second time after the dismissal is confirmed and before focus moves. 15–150ms have passed by then and the app has settled, so the surviving window is back in the list and focus is correctly held. When the app did close its last window both reads agree, so normal recovery is unchanged
+- The problem dates from v5.0.0 (`e1cff13` added the close-path display test), not from an OS update. v4 never ran this test on `Cmd+W` at all, so it always focused another app after a close
+- A first attribution to dual displays and the `onDisplay:` filter was measured and ruled out: with a single display that parameter has no effect, so changing it could not have fixed this
 
 ### v5.0.3 - Minimize Fallback for Apps That Ignore Cmd+M (2026-10-30)
 - `Cmd+M` is an application command, so an app that never implemented it ignores the keystroke completely and no signal of any kind appears. Parallels Desktop does this: measured with this app not running, its VM window was untouched 4s after `Cmd+M`, while `kAXMinimizedAttribute` on the same window is settable and writing it minimizes it

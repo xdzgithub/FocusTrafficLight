@@ -249,7 +249,11 @@ final class FocusRecoveryEngine {
                 AppLogger.notice(
                     "Dismissal confirmed by \(signal) after \(Int(waited * 1000))ms"
                 )
-                focusNextWindow(sourcePID: pending.sourcePID, onDisplay: pending.displayID)
+                focusNextWindow(
+                    sourcePID: pending.sourcePID,
+                    onDisplay: pending.displayID,
+                    actedOnWindow: pending.windowID
+                )
                 return
             }
 
@@ -457,7 +461,46 @@ final class FocusRecoveryEngine {
         return .pending(reason: "PID \(pid) to give up a window (has \(windows.count))")
     }
 
-    private func focusNextWindow(sourcePID: pid_t, onDisplay displayID: CGDirectDisplayID?) {
+    private func focusNextWindow(
+        sourcePID: pid_t,
+        onDisplay displayID: CGDirectDisplayID?,
+        actedOnWindow windowID: Int? = nil
+    ) {
+        // Ask once more whether the app still has a window, now that the dismissal
+        // is confirmed and it is about to lose focus.
+        //
+        // The same question was asked at trigger time, but apps do not answer it
+        // consistently: while one of their windows goes away some of them briefly
+        // take the surviving window out of the on-screen list — the window is alive,
+        // correctly framed, and simply not reported for a moment. Terminal does
+        // this, and Finder was reported doing it earlier. The trigger-time read
+        // lands inside that gap often enough to matter, and with only one window
+        // left there is nothing else in the list to hide the gap, so the app is
+        // taken to have run out of windows and focus is handed away.
+        //
+        // By now the dismissal has been confirmed (15–150ms later), so the app has
+        // settled: the window is back in the list and this second read sees it.
+        // Costs one window-list query on a path that already takes a snapshot, and
+        // changes nothing when the app really did close its last window — both
+        // reads agree that it has none.
+        //
+        // Without a display the app's whole on-screen set stands in, mirroring how
+        // the trigger-time guard falls back when it cannot name a display.
+        if let windowID, windowID > 0 {
+            let stillHasWindow = displayID.map {
+                windowOrder.hasOtherVisibleLayer0Window(
+                    ownerPID: sourcePID, onDisplay: $0, excluding: windowID
+                )
+            } ?? (windowOrder.visibleLayer0WindowCount(ownerPID: sourcePID) >= 2)
+
+            if stillHasWindow {
+                AppLogger.notice(
+                    "Not recovering — PID \(sourcePID) still has a visible window; the trigger-time read missed it"
+                )
+                return
+            }
+        }
+
         let snapshot = windowOrder.takeSnapshot()
         let myPID = ProcessInfo.processInfo.processIdentifier
 
