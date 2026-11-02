@@ -111,11 +111,15 @@ Quit
 1. Click menu bar icon → Shows menu
 2. Toggle "Enabled" → Enables/disables window focus behavior
 3. Toggle "Launch at Login" → Enables/disables login item
-4. Click "Quit" → Terminates application
+4. "Check for Updates…" → the only path that touches the network; runs a Sparkle check and asks before installing
+5. "Version x.y.z" → read-only, shows the running build
+6. "Star on GitHub" → opens the repository in the browser
+7. Click "Quit" → Terminates application
 
 ### Data Handling
 - **UserDefaults**: Stores enabled state and launch-at-login preference
-- No external API calls
+- **Network**: none at launch and none in the background. `SUEnableAutomaticChecks` is false and the scheduled interval is 0, so a request is made only when the user picks "Check for Updates…". `automaticallyDownloadsUpdates` is off, so finding an update does not install it
+- **Update authenticity**: each archive is verified against the EdDSA public key in `SUPublicEDKey`. The private key stays in this Mac's keychain, so replacing the published files cannot produce an installable update. This is what makes an unsigned/notarised distribution safe to self-update, and it is independent of Apple code signing
 - No persistent logging
 
 ### Architecture Pattern
@@ -143,13 +147,14 @@ Quit
 ## 4. Technical Specification
 
 ### Dependencies
-- **None** - Pure Apple frameworks only
+- **Sparkle 2.10** (SPM) — in-app updates only. Everything else is pure Apple frameworks
 
 ### Frameworks Used
 - `AppKit` - UI, menu bar, `NSWindow.windowNumbers`, `NSRunningApplication`
 - `ApplicationServices` - AXUIElement / AXObserver APIs
 - `CoreGraphics` - CGWindowList / CGWindow APIs
 - `IOKit` - `IOHIDCheckAccess` for Input Monitoring status
+- `Sparkle` - `SPUUpdater` for manual, user-confirmed updates
 - `ServiceManagement` - SMAppService for launch at login
 
 ### Private API Policy
@@ -198,6 +203,14 @@ FocusTrafficLight/
 ```
 
 ## 5. Version History
+
+### v5.0.5 - In-App Updates and a Visible Version (2026-11-02)
+- The menu now shows the running version and offers "Check for Updates…", which downloads and installs through Sparkle 2.10 instead of sending the user to GitHub for a manual download, unzip and drag
+- Checking is strictly manual: `SUEnableAutomaticChecks` is false and `SUScheduledCheckInterval` is 0, so nothing runs at launch or in the background; `automaticallyDownloadsUpdates` is off so an available update still needs a click
+- The feed is a static `appcast.xml` published as a release asset and read through `releases/latest/download/appcast.xml`, so there is no server to run
+- Authenticity comes from EdDSA: the public key ships in `SUPublicEDKey` and the private key stays in the local keychain. Replacing the published files cannot produce an installable update
+- Measured with a local feed: the app read 5.0.5, downloaded, verified, replaced and restarted, ending on 5.0.5. **This confirms Sparkle accepts updates signed with the local self-signed certificate** — the earlier concern that a non-Developer-ID identity would be rejected was wrong
+- `scripts/release.sh` now performs the whole release, including `generate_appcast`. A hand-written appcast carries no `sparkle:edSignature`, and updates built from it are rejected
 
 ### v5.0.4 - Focus No Longer Escapes an App That Still Has a Window (2026-11-02)
 - Closing one of an app's last two windows used to hand focus to another app instead of leaving it with the surviving window. Reported on Terminal, and earlier on Finder

@@ -1,5 +1,26 @@
 # Changelog
 
+## v5.0.5 - 2026-11-02
+
+新增：菜单栏显示当前版本，并可手动检查更新。
+
+### 新增
+- 菜单显示 `Version 5.0.5`。此前界面完全不显示版本号，排查问题时无法确认用户装的是哪一版。
+- 新增「Check for Updates…」：接入 Sparkle 2.10，检查后可在应用内完成下载与安装，无需再去 GitHub 手动下载、解压、拖拽。
+- 新增「Star on GitHub」，直接打开项目主页。
+- **只在点击时联网**：`SUEnableAutomaticChecks` 为 false、检查间隔为 0，启动时或后台都不会发出任何请求；`automaticallyDownloadsUpdates` 同样关闭，即使检查到新版本也要用户确认才安装。
+
+### 更新真实性
+- 更新包由 EdDSA 签名校验：公钥内置在应用内（`SUPublicEDKey`），私钥在本机钥匙串。即使有人拿到仓库并替换了发布文件，也签不出能通过校验的更新包。
+- 更新源是一个静态 `appcast.xml`，随 release 一起上传，通过 `releases/latest/download/appcast.xml` 固定地址访问 —— 不需要服务器，也不需要额外的托管。
+
+### 验证
+- 用本地 feed 实测完整链路：应用读到 5.0.5、下载、验签、替换、重启，安装后版本号变为 5.0.5。**这同时证实了本地自签名证书签出的更新包能被 Sparkle 接受**（此前担心非 Developer ID 会被拒，实际不会）。
+- 启动后无任何 Sparkle 网络活动，确认「仅手动检查」生效。
+
+### 发版流程
+- 新增 `scripts/release.sh`：构建 → 打包 → `generate_appcast` 生成带签名的 appcast → 校验 → 上传。**appcast 必须由该脚本生成**，手写的 appcast 没有 `sparkle:edSignature`，由它产生的更新会被应用拒绝。
+
 ## v5.0.4 - 2026-11-02
 
 修复：应用还剩一个窗口时关闭另一个，焦点被错误地交给其他应用。

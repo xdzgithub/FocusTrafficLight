@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var windowManager: WindowManager!
     private var accessibilityHelper: AccessibilityHelper!
+    private let updater = UpdaterService()
 
     private var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "isEnabled") }
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         checkAccessibilityPermissions()
+        updater.start()
 
         if isEnabled {
             windowManager.startMonitoring()
@@ -45,6 +47,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchAtLoginItem.target = self
         launchAtLoginItem.state = isLaunchAtLoginEnabled() ? .on : .off
         menu.addItem(launchAtLoginItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
+
+        // Shown for information only — knowing which build is running is the
+        // first thing anyone needs when reporting a problem, and until now the
+        // menu did not say.
+        let versionItem = NSMenuItem(
+            title: "Version \(UpdaterService.shortVersion)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        let starItem = NSMenuItem(
+            title: "Star on GitHub",
+            action: #selector(openGitHubRepository(_:)),
+            keyEquivalent: ""
+        )
+        starItem.target = self
+        menu.addItem(starItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -89,6 +120,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let newState = !isLaunchAtLoginEnabled()
         setLaunchAtLogin(enabled: newState)
         sender.state = newState ? .on : .off
+    }
+
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        AppLogger.notice("Check for Updates chosen by the user")
+
+        guard updater.checkForUpdates() else {
+            // The updater failed to start at launch, so there is nothing to ask.
+            // Saying so beats a menu item that appears to do nothing.
+            let alert = NSAlert()
+            alert.messageText = "Cannot Check for Updates"
+            alert.informativeText = "The updater did not start. See the unified log for details."
+            alert.alertStyle = .warning
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        }
+
+        // A menu-bar app has no window of its own, so the update panel would
+        // open behind whatever is frontmost without this.
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openGitHubRepository(_ sender: NSMenuItem) {
+        guard let url = URL(string: "https://github.com/xdzgithub/FocusTrafficLight") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func quitApp(_ sender: NSMenuItem) {

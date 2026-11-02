@@ -18,6 +18,7 @@ for the mouse or `Cmd+Tab` afterwards.
 - **App Hide Support**: `Cmd+H` and apps with their own hide shortcuts (WeChat, QQ, Feishu) focus the next window after hiding
 - **Broad Compatibility**: Works with regular apps and non-standard windows such as v2rayN and Keynote save panels
 - **Menu Bar Control**: Clean menu bar interface with one-click toggle
+- **In-App Updates**: Check for a new version from the menu and install it without leaving the app; the version you are running is shown in the menu
 
 ## Requirements
 
